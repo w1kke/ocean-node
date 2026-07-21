@@ -113,6 +113,12 @@ export type ConsumerResultPolicy =
   | { mode: 'archive' }
   | { mode: 'singleJson'; maxBytes: number }
 
+export interface PrivateDatasetPolicy {
+  url: string
+  maxBytes: number
+  approvedAlgorithmImage: string
+}
+
 export interface ComputeEnvironmentBaseConfig {
   description?: string // v1
   storageExpiry?: number // amount of seconds for storage
@@ -160,6 +166,7 @@ export interface C2DEnvironmentConfig {
   resources?: ComputeResource[]
   enableNetwork?: boolean // whether network is enabled for algorithm containers
   consumerResultPolicy: ConsumerResultPolicy
+  privateDataset?: PrivateDatasetPolicy
 }
 
 export type ImageScanSeverity = 'UNKNOWN' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'

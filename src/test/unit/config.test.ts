@@ -117,6 +117,102 @@ describe('Should require an explicit consumer result policy', () => {
       }).success
     ).to.equal(false)
   })
+
+  it('validates and identity-binds a private dataset policy', () => {
+    const privateDataset = {
+      url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
+      maxBytes: 16 * 1024 * 1024,
+      approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 262144 },
+        privateDataset
+      }).success
+    ).to.equal(true)
+
+    const withoutPolicy = createComputeEnvironmentId(
+      'cluster',
+      null,
+      { mode: 'singleJson', maxBytes: 262144 },
+      '0'
+    )
+    const withPolicy = createComputeEnvironmentId(
+      'cluster',
+      null,
+      { mode: 'singleJson', maxBytes: 262144 },
+      '0',
+      privateDataset
+    )
+    expect(withPolicy).not.to.equal(withoutPolicy)
+  })
+
+  it('rejects unbounded or mutable private dataset policies', () => {
+    const policy = {
+      url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
+      maxBytes: 16 * 1024 * 1024,
+      approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'archive' },
+        privateDataset: { ...policy, maxBytes: 16 * 1024 * 1024 + 1 }
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'archive' },
+        privateDataset: {
+          ...policy,
+          approvedAlgorithmImage: 'brainstem/private-rr:latest'
+        }
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'archive' },
+        privateDataset: {
+          ...policy,
+          url: `${policy.url}?serviceToken=must-not-live-in-the-url`
+        }
+      }).success
+    ).to.equal(false)
+  })
+
+  it('rejects private datasets in exfiltration-prone environments', () => {
+    const privateDataset = {
+      url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
+      maxBytes: 1024,
+      approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`
+    }
+    for (const unsafe of [
+      {
+        enableNetwork: true,
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 1024 }
+      },
+      { enableNetwork: false, consumerResultPolicy: { mode: 'archive' } },
+      {
+        enableNetwork: false,
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 1024 },
+        free: {
+          resources: [{ id: 'disk', max: 1 }],
+          allowImageBuild: true
+        }
+      }
+    ]) {
+      expect(
+        C2DEnvironmentConfigSchema.safeParse({
+          ...baseEnvironment,
+          ...unsafe,
+          privateDataset
+        }).success
+      ).to.equal(false)
+    }
+  })
 })
 
 describe('Should require an explicit image scan severity policy', () => {

@@ -251,7 +251,27 @@ export const C2DEnvironmentConfigSchema = z
     free: ComputeEnvironmentFreeOptionsSchema.optional(),
     resources: z.array(ComputeResourceSchema).optional(),
     enableNetwork: z.boolean().optional().default(false),
-    consumerResultPolicy: ConsumerResultPolicySchema
+    consumerResultPolicy: ConsumerResultPolicySchema,
+    privateDataset: z
+      .object({
+        url: z
+          .string()
+          .url()
+          .refine((value) => {
+            const parsed = new URL(value)
+            return !parsed.username && !parsed.password && !parsed.search && !parsed.hash
+          }, 'private dataset URL must not contain credentials, query, or fragment'),
+        maxBytes: z
+          .number()
+          .int()
+          .min(1)
+          .max(16 * 1024 * 1024),
+        approvedAlgorithmImage: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/)
+      })
+      .strict()
+      .optional()
   })
   .refine(
     (data) =>
@@ -260,6 +280,17 @@ export const C2DEnvironmentConfigSchema = z
     {
       message:
         'Each environment must have either a non-empty "fees" configuration or a "free" configuration'
+    }
+  )
+  .refine(
+    (data) =>
+      !data.privateDataset ||
+      (data.enableNetwork === false &&
+        data.consumerResultPolicy.mode === 'singleJson' &&
+        data.free?.allowImageBuild !== true),
+    {
+      message:
+        'Private dataset environments require disabled algorithm networking, bounded single-JSON results, and disabled image builds'
     }
   )
   .refine((data) => data.storageExpiry >= data.maxJobDuration, {

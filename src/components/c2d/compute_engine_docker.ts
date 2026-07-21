@@ -25,6 +25,7 @@ import type {
   C2DEnvironmentConfig,
   ComputeResourcesPricingInfo,
   ConsumerResultPolicy,
+  PrivateDatasetPolicy,
   ImageScanSeverity
 } from '../../@types/C2D/C2D.js'
 import { BASE_CHAIN_ID, USDC_TOKEN_ADDRESS_BASE } from '../../utils/config.js'
@@ -64,9 +65,10 @@ import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
 import { dockerRegistryAuth, OceanNodeConfig } from '../../@types/OceanNode.js'
-import { EncryptMethod } from '../../@types/fileObject.js'
+import { EncryptMethod, UrlFileObject } from '../../@types/fileObject.js'
 import { getAddress, ZeroAddress } from 'ethers'
 import { AccessList } from '../../@types/AccessList.js'
+import { assertPrivateDatasetJob, downloadPrivateDataset } from './privateDataset.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -78,17 +80,24 @@ export function createComputeEnvironmentId(
   clusterHash: string,
   fees: ComputeEnvFeesStructure,
   resultPolicy: ConsumerResultPolicy,
-  suffix: string
+  suffix: string,
+  privateDataset?: PrivateDatasetPolicy
 ): string {
   return (
     clusterHash +
     '-' +
-    create256Hash(JSON.stringify(fees) + JSON.stringify(resultPolicy) + suffix)
+    create256Hash(
+      JSON.stringify(fees) +
+        JSON.stringify(resultPolicy) +
+        (privateDataset ? JSON.stringify(privateDataset) : '') +
+        suffix
+    )
   )
 }
 
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
+  private privateDatasetPolicies: Map<string, PrivateDatasetPolicy> = new Map()
 
   public docker: Dockerode
   private cronTimer: any
@@ -427,8 +436,13 @@ export class C2DEngineDocker extends C2DEngine {
         this.getC2DConfig().hash,
         env.fees,
         env.consumerResultPolicy,
-        envIdSuffix
+        envIdSuffix,
+        envDef.privateDataset
       )
+
+      if (envDef.privateDataset) {
+        this.privateDatasetPolicies.set(env.id, envDef.privateDataset)
+      }
 
       this.envs.push(env)
       CORE_LOGGER.info(
@@ -1309,6 +1323,10 @@ export class C2DEngineDocker extends C2DEngine {
           algorithm
         )}`
       )
+    }
+    const privateDatasetPolicy = this.privateDatasetPolicies.get(env.id)
+    if (privateDatasetPolicy) {
+      assertPrivateDatasetJob(privateDatasetPolicy, image, assets.length)
     }
     let additionalDockerFiles: { [key: string]: any } = null
     if (
@@ -2850,7 +2868,7 @@ export class C2DEngineDocker extends C2DEngine {
         url.searchParams.append(key, String(value))
       }
       filesObject.url = url.toString()
-      CORE_LOGGER.info('Appended userData to file url: ' + filesObject.url)
+      CORE_LOGGER.info('Appended userData parameters to a file URL')
     }
     return filesObject
   }
@@ -2866,6 +2884,20 @@ export class C2DEngineDocker extends C2DEngine {
     const jobFolderPath = this.getStoragePath() + '/' + job.jobId
     const fullAlgoPath = jobFolderPath + '/data/transformations/algorithm'
     const configLogPath = jobFolderPath + '/data/logs/configuration.log'
+
+    const jobEnvironment = await this.getJobEnvironment(job)
+    if (!jobEnvironment) {
+      CORE_LOGGER.error('Unable to resolve the compute environment during provisioning')
+      appendFileSync(
+        configLogPath,
+        'Unable to resolve the compute environment during provisioning\n'
+      )
+      return {
+        status: C2DStatusNumber.DataProvisioningFailed,
+        statusText: C2DStatusText.DataProvisioningFailed
+      }
+    }
+    const privateDatasetPolicy = this.privateDatasetPolicies.get(jobEnvironment.id)
 
     try {
       appendFileSync(
@@ -3012,6 +3044,9 @@ export class C2DEngineDocker extends C2DEngine {
         try {
           if (asset.fileObject.type) {
             if (asset.fileObject.type === 'nodePersistentStorage') {
+              if (privateDatasetPolicy) {
+                throw new Error('private_dataset_storage_type_invalid')
+              }
               // local storage is handled later, when we start the container and create the binds
               continue
             }
@@ -3025,9 +3060,11 @@ export class C2DEngineDocker extends C2DEngine {
           }
 
           // we need the file info for the name (but could be something else here)
-          fileInfo = await storage.getFileInfo({
-            type: storage.getStorageType(asset.fileObject)
-          })
+          if (!privateDatasetPolicy) {
+            fileInfo = await storage.getFileInfo({
+              type: storage.getStorageType(asset.fileObject)
+            })
+          }
         } catch (e) {
           CORE_LOGGER.error(`Unable to get storage class for asset: ${e.message}`)
           appendFileSync(
@@ -3061,9 +3098,11 @@ export class C2DEngineDocker extends C2DEngine {
               asset.userdata
             )
             storage = Storage.getStorageClass(decryptedFileObject, config)
-            fileInfo = await storage.getFileInfo({
-              type: storage.getStorageType(decryptedFileObject)
-            })
+            if (!privateDatasetPolicy) {
+              fileInfo = await storage.getFileInfo({
+                type: storage.getStorageType(decryptedFileObject)
+              })
+            }
           } catch (e) {
             CORE_LOGGER.error(`Unable to get storage class for asset: ${e.message}`)
             appendFileSync(
@@ -3078,7 +3117,28 @@ export class C2DEngineDocker extends C2DEngine {
         }
       }
 
-      if (storage && fileInfo) {
+      if (storage && privateDatasetPolicy) {
+        const fullPath = jobFolderPath + '/data/inputs/dataset.json'
+        appendFileSync(configLogPath, 'Downloading verified private dataset\n')
+        try {
+          await downloadPrivateDataset(
+            storage.getFile() as UrlFileObject,
+            fullPath,
+            job.jobId,
+            privateDatasetPolicy
+          )
+        } catch (e) {
+          CORE_LOGGER.error(`Unable to provision private dataset: ${e.message}`)
+          appendFileSync(
+            configLogPath,
+            `Unable to provision private dataset: ${e.message}\n`
+          )
+          return {
+            status: C2DStatusNumber.DataProvisioningFailed,
+            statusText: C2DStatusText.DataProvisioningFailed
+          }
+        }
+      } else if (storage && fileInfo) {
         const fullPath = jobFolderPath + '/data/inputs/' + fileInfo[0].name
         appendFileSync(configLogPath, `Downloading asset to ${fullPath}\n`)
         try {
