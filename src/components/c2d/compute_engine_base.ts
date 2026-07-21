@@ -161,10 +161,6 @@ export abstract class C2DEngine {
     return null
   }
 
-  public getStreamableLogs(jobId: string): Promise<NodeJS.ReadableStream> {
-    throw new Error(`Not implemented for this engine type`)
-  }
-
   protected async getJobEnvironment(job: DBComputeJob): Promise<ComputeEnvironment> {
     const environments: ComputeEnvironment[] = await (
       await this.getComputeEnvironments()

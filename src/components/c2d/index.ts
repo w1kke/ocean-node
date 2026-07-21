@@ -1,4 +1,4 @@
-import { deleteKeysFromObject, sanitizeServiceFiles } from '../../utils/util.js'
+import { sanitizeServiceFiles } from '../../utils/util.js'
 
 import { BaseFileObject, EncryptMethod } from '../../@types/fileObject.js'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
@@ -32,19 +32,22 @@ export async function decryptFilesObject(
 }
 
 export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): ComputeJob {
-  const job: ComputeJob = deleteKeysFromObject(dbCompute, [
-    'clusterHash',
-    'configlogURL',
-    'publishlogURL',
-    'algologURL',
-    'outputsURL',
-    // 'algorithm',
-    // 'assets',
-    'isRunning',
-    'isStarted',
-    'containerImage',
-    'encryptedDockerRegistryAuth',
-    'output'
-  ]) as ComputeJob
-  return job
+  return {
+    owner: dbCompute.owner,
+    did: dbCompute.did,
+    jobId: dbCompute.jobId,
+    dateCreated: dbCompute.dateCreated,
+    dateFinished: dbCompute.dateFinished,
+    status: dbCompute.status,
+    statusText: dbCompute.statusText,
+    results: dbCompute.results,
+    inputDID: dbCompute.inputDID,
+    algoDID: dbCompute.algoDID,
+    maxJobDuration: dbCompute.maxJobDuration,
+    agreementId: dbCompute.agreementId,
+    environment: dbCompute.environment,
+    metadata: dbCompute.metadata,
+    terminationDetails: dbCompute.terminationDetails,
+    queueMaxWaitTime: dbCompute.queueMaxWaitTime
+  }
 }

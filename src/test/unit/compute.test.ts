@@ -30,8 +30,11 @@ import {
 } from '../utils/utils.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
-import { dockerImageManifest } from '../data/assets.js'
-import { C2DEngine } from '../../components/c2d/index.js'
+import { completeDBComputeJob, dockerImageManifest } from '../data/assets.js'
+import {
+  C2DEngine,
+  omitDBComputeFieldsFromComputeJob
+} from '../../components/c2d/index.js'
 import { checkManifestPlatform } from '../../components/c2d/compute_engine_docker.js'
 import { ValidateParams } from '../../components/httpRoutes/validateCommands.js'
 import { Readable } from 'stream'
@@ -282,27 +285,52 @@ describe('Compute Jobs Database', () => {
     expect(convertStringToArray(str)).to.deep.equal(expectedArray)
   })
 
-  // it('should convert DBComputeJob to ComputeJob and omit internal DB data', () => {
-  //   const source: any = completeDBComputeJob
-  //   const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source as DBComputeJob)
+  it('should expose only the public compute job projection', () => {
+    const source = {
+      ...completeDBComputeJob,
+      results: [],
+      queueMaxWaitTime: 60,
+      assets: [{ fileObject: { type: 'url', url: 'https://private.example/data' } }],
+      algorithm: { fileObject: { type: 'url', url: 'https://private.example/algo' } },
+      payment: { chainId: 1, token: 'token', lockTx: 'lock', cost: 1 },
+      additionalViewers: ['0x0000000000000000000000000000000000000001'],
+      encryptedDockerRegistryAuth: 'secret'
+    } as unknown as DBComputeJob
+    const output: ComputeJob = omitDBComputeFieldsFromComputeJob(source)
 
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'clusterHash')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'configlogURL')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'publishlogURL')).to.be.equal(
-  //     false
-  //   )
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'algologURL')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'outputsURL')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'algorithm')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'assets')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'isRunning')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'isStarted')).to.be.equal(false)
-  //   expect(Object.prototype.hasOwnProperty.call(output, 'containerImage')).to.be.equal(
-  //     false
-  //   )
-  // })
+    expect(output.owner).to.equal(source.owner)
+    expect(output.jobId).to.equal(source.jobId)
+    expect(output.status).to.equal(source.status)
+    expect(Object.keys(output)).to.have.members([
+      'owner',
+      'did',
+      'jobId',
+      'dateCreated',
+      'dateFinished',
+      'status',
+      'statusText',
+      'results',
+      'inputDID',
+      'algoDID',
+      'maxJobDuration',
+      'agreementId',
+      'environment',
+      'metadata',
+      'terminationDetails',
+      'queueMaxWaitTime'
+    ])
+    for (const privateField of [
+      'assets',
+      'algorithm',
+      'payment',
+      'additionalViewers',
+      'encryptedDockerRegistryAuth',
+      'containerImage',
+      'clusterHash'
+    ]) {
+      expect(output).not.to.have.property(privateField)
+    }
+  })
 
   it('should check manifest platform against local platform env', () => {
     const arch = os.machine() // ex: arm

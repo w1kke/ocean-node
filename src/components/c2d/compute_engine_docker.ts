@@ -1381,49 +1381,6 @@ export class C2DEngineDocker extends C2DEngine {
   // eslint-disable-next-line require-await
   protected async getResults(jobId: string): Promise<ComputeResult[]> {
     const res: ComputeResult[] = []
-    let index = 0
-    try {
-      const logStat = statSync(
-        this.getStoragePath() + '/' + jobId + '/data/logs/image.log'
-      )
-      if (logStat) {
-        res.push({
-          filename: 'image.log',
-          filesize: logStat.size,
-          type: 'imageLog',
-          index
-        })
-        index = index + 1
-      }
-    } catch (e) {}
-    try {
-      const logStat = statSync(
-        this.getStoragePath() + '/' + jobId + '/data/logs/configuration.log'
-      )
-      if (logStat) {
-        res.push({
-          filename: 'configuration.log',
-          filesize: logStat.size,
-          type: 'configurationLog',
-          index
-        })
-        index = index + 1
-      }
-    } catch (e) {}
-    try {
-      const logStat = statSync(
-        this.getStoragePath() + '/' + jobId + '/data/logs/algorithm.log'
-      )
-      if (logStat) {
-        res.push({
-          filename: 'algorithm.log',
-          filesize: logStat.size,
-          type: 'algorithmLog',
-          index
-        })
-        index = index + 1
-      }
-    } catch (e) {}
     try {
       // check if we have an output request.
       const jobDb = await this.db.getJob(jobId)
@@ -1436,24 +1393,9 @@ export class C2DEngineDocker extends C2DEngine {
             filename: 'outputs.tar',
             filesize: outputStat.size,
             type: 'output',
-            index
+            index: 0
           })
-          index = index + 1
         }
-      }
-    } catch (e) {}
-    try {
-      const logStat = statSync(
-        this.getStoragePath() + '/' + jobId + '/data/logs/publish.log'
-      )
-      if (logStat) {
-        res.push({
-          filename: 'publish.log',
-          filesize: logStat.size,
-          type: 'publishLog',
-          index
-        })
-        index = index + 1
       }
     } catch (e) {}
     return res
@@ -1502,82 +1444,19 @@ export class C2DEngineDocker extends C2DEngine {
     }
     const results = await this.getResults(jobId)
     for (const i of results) {
-      if (i.index === index) {
-        if (i.type === 'algorithmLog') {
-          return {
-            stream: createReadStream(
-              this.getStoragePath() + '/' + jobId + '/data/logs/algorithm.log'
-            ),
-            headers: {
-              'Content-Type': 'text/plain'
-            }
-          }
-        }
-        if (i.type === 'configurationLog') {
-          return {
-            stream: createReadStream(
-              this.getStoragePath() + '/' + jobId + '/data/logs/configuration.log'
-            ),
-            headers: {
-              'Content-Type': 'text/plain'
-            }
-          }
-        }
-        if (i.type === 'publishLog') {
-          return {
-            stream: createReadStream(
-              this.getStoragePath() + '/' + jobId + '/data/logs/publish.log'
-            ),
-            headers: {
-              'Content-Type': 'text/plain'
-            }
-          }
-        }
-        if (i.type === 'imageLog') {
-          return {
-            stream: createReadStream(
-              this.getStoragePath() + '/' + jobId + '/data/logs/image.log'
-            ),
-            headers: {
-              'Content-Type': 'text/plain'
-            }
-          }
-        }
-        if (i.type === 'output') {
-          return {
-            stream: createReadStream(
-              this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar',
-              offset > 0 ? { start: offset } : undefined
-            ),
-            headers: {
-              'Content-Type': 'application/octet-stream'
-            }
+      if (i.index === index && i.type === 'output') {
+        return {
+          stream: createReadStream(
+            this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar',
+            offset > 0 ? { start: offset } : undefined
+          ),
+          headers: {
+            'Content-Type': 'application/octet-stream'
           }
         }
       }
     }
     return null
-  }
-
-  // eslint-disable-next-line require-await
-  public override async getStreamableLogs(jobId: string): Promise<NodeJS.ReadableStream> {
-    const jobRes: DBComputeJob[] = await this.db.getJob(jobId)
-    if (jobRes.length === 0) return null
-    if (!jobRes[0].isRunning) return null
-    try {
-      const job = jobRes[0]
-      const container = this.docker.getContainer(job.jobId + '-algoritm')
-      const details = await container.inspect()
-      if (details.State.Running === false) return null
-      return await container.logs({
-        stdout: true,
-        stderr: true,
-        follow: true
-      })
-    } catch (e) {
-      CORE_LOGGER.error(`getStreamableLogs failed for job ${jobId}: ${e?.message ?? e}`)
-      return null
-    }
   }
 
   private setNewTimer() {

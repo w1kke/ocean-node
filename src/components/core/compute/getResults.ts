@@ -68,24 +68,39 @@ export class ComputeGetResultHandler extends CommandHandler {
         task.index,
         task.offset ?? 0
       )
+      if (!respStream) {
+        return {
+          stream: null,
+          status: {
+            httpStatus: 404,
+            error: 'Compute result not found'
+          }
+        }
+      }
       const response: P2PCommandResponse = {
-        stream: respStream?.stream,
+        stream: respStream.stream,
         status: {
           httpStatus: 200
         }
       }
       // need to pass the headers properly
-      if (respStream?.headers) {
-        response.status.headers = respStream?.headers
+      if (respStream.headers) {
+        response.status.headers = respStream.headers
       }
       return response
     } catch (error) {
-      CORE_LOGGER.error(error.message)
+      const message = (error as Error)?.message ?? String(error)
+      CORE_LOGGER.error(message)
+      const httpStatus = message.includes('not authorized')
+        ? 403
+        : message.includes('Cannot find job')
+          ? 404
+          : 500
       return {
         stream: null,
         status: {
-          httpStatus: 500,
-          error: error.message
+          httpStatus,
+          error: message
         }
       }
     }

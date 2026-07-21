@@ -1,8 +1,6 @@
 import { P2PCommandResponse } from '../../../@types/index.js'
-import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { CommandHandler } from '../handler/handler.js'
 import { ComputeGetStreamableLogsCommand } from '../../../@types/commands.js'
-import { Stream } from 'stream'
 import {
   buildInvalidRequestMessage,
   validateCommandParameters,
@@ -24,71 +22,15 @@ export class ComputeGetStreamableLogsHandler extends CommandHandler {
   }
 
   async handle(task: ComputeGetStreamableLogsCommand): Promise<P2PCommandResponse> {
-    const oceanNode = this.getOceanNode()
-
     const validationResponse = await this.verifyParamsAndRateLimits(task)
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
-
-    const authValidationResponse = await this.validateTokenOrSignature(
-      task.authorization,
-      task.consumerAddress,
-      task.nonce,
-      task.signature,
-      task.command
-    )
-    if (authValidationResponse.status.httpStatus !== 200) {
-      return authValidationResponse
-    }
-
-    // split jobId (which is already in hash-jobId format) and get the hash
-    // then get jobId which might contain dashes as well
-    const index = task.jobId.indexOf('-')
-    const hash = task.jobId.slice(0, index)
-    const jobId = task.jobId.slice(index + 1)
-
-    // env might contain
-    let engine
-    try {
-      engine = await oceanNode.getC2DEngines().getC2DByHash(hash)
-    } catch (e) {
-      return {
-        stream: null,
-        status: {
-          httpStatus: 500,
-          error: 'Invalid C2D Environment'
-        }
-      }
-    }
-    try {
-      const respStream = await engine.getStreamableLogs(jobId)
-      if (!respStream) {
-        return {
-          stream: null,
-          status: {
-            httpStatus: 404,
-            error: 'Job not found or not running'
-          }
-        }
-      }
-      const response: P2PCommandResponse = {
-        stream: respStream as unknown as Stream,
-        status: {
-          httpStatus: 200
-        }
-      }
-
-      return response
-    } catch (error) {
-      const message = (error as Error)?.message ?? String(error)
-      CORE_LOGGER.error(message)
-      return {
-        stream: null,
-        status: {
-          httpStatus: 500,
-          error: message
-        }
+    return {
+      stream: null,
+      status: {
+        httpStatus: 403,
+        error: 'Compute logs are operator-only'
       }
     }
   }
