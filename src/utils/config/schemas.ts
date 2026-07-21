@@ -273,21 +273,35 @@ export const C2DEnvironmentConfigSchema = z
     { message: 'There is no "disk" resource configured. This is mandatory' }
   )
 
+const ImageScanSeveritySchema = z.enum(['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
+
 export const C2DDockerConfigSchema = z.array(
-  z.object({
-    socketPath: z.string().optional(),
-    protocol: z.string().optional(),
-    host: z.string().optional(),
-    port: z.number().optional(),
-    caPath: z.string().optional(),
-    certPath: z.string().optional(),
-    keyPath: z.string().optional(),
-    imageRetentionDays: z.number().int().min(1).optional().default(7),
-    imageCleanupInterval: z.number().int().min(3600).optional().default(86400), // min 1 hour, default 24 hours
-    scanImages: z.boolean().optional().default(false),
-    scanImageDBUpdateInterval: z.number().int().min(3600).optional().default(43200), // default 43200 (12 hours)
-    environments: z.array(C2DEnvironmentConfigSchema).min(1)
-  })
+  z
+    .object({
+      socketPath: z.string().optional(),
+      protocol: z.string().optional(),
+      host: z.string().optional(),
+      port: z.number().optional(),
+      caPath: z.string().optional(),
+      certPath: z.string().optional(),
+      keyPath: z.string().optional(),
+      imageRetentionDays: z.number().int().min(1).optional().default(7),
+      imageCleanupInterval: z.number().int().min(3600).optional().default(86400), // min 1 hour, default 24 hours
+      scanImages: z.boolean().optional().default(false),
+      scanImageRejectSeverities: z.array(ImageScanSeveritySchema).optional(),
+      scanImageDBUpdateInterval: z.number().int().min(3600).optional().default(43200), // default 43200 (12 hours)
+      environments: z.array(C2DEnvironmentConfigSchema).min(1)
+    })
+    .superRefine((data, context) => {
+      if (data.scanImages && !data.scanImageRejectSeverities?.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['scanImageRejectSeverities'],
+          message:
+            'scanImageRejectSeverities must be a non-empty list when scanImages is true'
+        })
+      }
+    })
 )
 
 export const C2DClusterInfoSchema = z.object({

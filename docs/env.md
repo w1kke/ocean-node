@@ -141,6 +141,7 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
   {
     "socketPath": "/var/run/docker.sock",
     "scanImages": true,
+    "scanImageRejectSeverities": ["HIGH", "CRITICAL"],
     "imageRetentionDays": 7,
     "imageCleanupInterval": 86400,
     "environments": [
@@ -205,7 +206,8 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
 #### Configuration Options
 
 - **socketPath**: Path to the Docker socket (e.g., docker.sock).
-- **scanImages**: Whether Docker images should be scanned for vulnerabilities using Trivy. If enabled and critical vulnerabilities are found, the C2D job is rejected.
+- **scanImages**: Whether Docker images should be scanned for vulnerabilities using Trivy. Disabled scanning does not pull or run Trivy.
+- **scanImageRejectSeverities**: Required and non-empty when `scanImages` is true. The same severity list is passed to Trivy and used to reject the image. Scanner or report failures reject the job as `ImageScanFailed`.
 - **scanImageDBUpdateInterval**: How often to update the vulnerability database, in seconds. Default: 43200 (12 hours)
 - **consumerResultPolicy**: Required per environment. Use `{ "mode": "archive" }` only for intentional legacy output, or `{ "mode": "singleJson", "maxBytes": 262144 }` to release exactly one bounded `result.json`.
 - **enableNetwork**: Whether networking is enabled for algorithm containers. Default: false

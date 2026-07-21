@@ -8,7 +8,10 @@ import {
   setupEnvironment
 } from '../utils/utils.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
-import { C2DEnvironmentConfigSchema } from '../../utils/config/schemas.js'
+import {
+  C2DDockerConfigSchema,
+  C2DEnvironmentConfigSchema
+} from '../../utils/config/schemas.js'
 
 let config: OceanNodeConfig
 describe('Should validate configuration from JSON', () => {
@@ -99,6 +102,47 @@ describe('Should require an explicit consumer result policy', () => {
         ...baseEnvironment,
         consumerResultPolicy: { mode: 'singleJson', maxBytes: 10 * 1024 * 1024 + 1 }
       }).success
+    ).to.equal(false)
+  })
+})
+
+describe('Should require an explicit image scan severity policy', () => {
+  const environment = {
+    consumerResultPolicy: { mode: 'archive' },
+    resources: [{ id: 'disk', total: 1 }],
+    free: { resources: [{ id: 'disk', max: 1 }] }
+  }
+
+  it('allows disabled scanning without a severity policy', () => {
+    expect(
+      C2DDockerConfigSchema.safeParse([
+        { scanImages: false, environments: [environment] }
+      ]).success
+    ).to.equal(true)
+  })
+
+  it('requires a supported non-empty policy when scanning is enabled', () => {
+    expect(
+      C2DDockerConfigSchema.safeParse([{ scanImages: true, environments: [environment] }])
+        .success
+    ).to.equal(false)
+    expect(
+      C2DDockerConfigSchema.safeParse([
+        {
+          scanImages: true,
+          scanImageRejectSeverities: ['HIGH', 'CRITICAL'],
+          environments: [environment]
+        }
+      ]).success
+    ).to.equal(true)
+    expect(
+      C2DDockerConfigSchema.safeParse([
+        {
+          scanImages: true,
+          scanImageRejectSeverities: ['SEVERE'],
+          environments: [environment]
+        }
+      ]).success
     ).to.equal(false)
   })
 })

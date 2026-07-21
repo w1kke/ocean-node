@@ -2,13 +2,13 @@
 
 ## Next Agent Prompt
 
-Status: active, last updated 2026-07-21.
+Status: complete, last updated 2026-07-21.
 
-Slices 01 and 02 are complete on `feature/consumer-result-policy`. Implement the fail-closed scanner next, then rerun Marine's strict local result checkpoint. Keep Brainstem schema logic, marketplace, chain, Crab, mobile, and CI publication work out of this feature.
+All three slices are complete on `feature/consumer-result-policy`. Marine's strict local result checkpoint must remain pinned to the final Node commit. Keep Brainstem schema logic, marketplace, chain, Crab, mobile, and CI publication work out of this feature.
 
 - [x] [01 — consumer job boundary](slices/01-consumer-job-boundary.md)
 - [x] [02 — explicit result release](slices/02-explicit-result-release.md)
-- [ ] [03 — fail-closed image scanning](slices/03-fail-closed-image-scanning.md)
+- [x] [03 — fail-closed image scanning](slices/03-fail-closed-image-scanning.md)
 
 ## Goal
 

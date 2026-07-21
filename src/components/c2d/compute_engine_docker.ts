@@ -24,7 +24,8 @@ import type {
   ComputeResource,
   C2DEnvironmentConfig,
   ComputeResourcesPricingInfo,
-  ConsumerResultPolicy
+  ConsumerResultPolicy,
+  ImageScanSeverity
 } from '../../@types/C2D/C2D.js'
 import { BASE_CHAIN_ID, USDC_TOKEN_ADDRESS_BASE } from '../../utils/config.js'
 import { C2DEngine } from './compute_engine_base.js'
@@ -58,6 +59,7 @@ import { OceanNode } from '../../OceanNode.js'
 import { KeyManager } from '../KeyManager/index.js'
 import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.js'
 import { readSingleJsonResultArchive } from './consumerResult.js'
+import { evaluateTrivyReport } from './imageScan.js'
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
@@ -70,6 +72,7 @@ const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
 
 const trivyImage = 'aquasec/trivy:0.69.3' // Use pinned versions for safety
+const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
@@ -87,6 +90,7 @@ export class C2DEngineDocker extends C2DEngine {
   private cleanupInterval: number
   private paymentClaimInterval: number
   private scanImages: boolean
+  private scanImageRejectSeverities: ImageScanSeverity[]
   private scanImageDBUpdateInterval: number
   private trivyCachePath: string
   private cpuAllocations: Map<string, number[]> = new Map()
@@ -114,6 +118,13 @@ export class C2DEngineDocker extends C2DEngine {
     this.cleanupInterval = clusterConfig.connection.imageCleanupInterval
     this.paymentClaimInterval = clusterConfig.connection.paymentClaimInterval || 3600 // 1 hour
     this.scanImages = clusterConfig.connection.scanImages || false // default is not to scan images for now, until it's prod ready
+    this.scanImageRejectSeverities =
+      clusterConfig.connection.scanImageRejectSeverities || []
+    if (this.scanImages && this.scanImageRejectSeverities.length === 0) {
+      throw new Error(
+        'scanImageRejectSeverities must be configured when image scanning is enabled'
+      )
+    }
     this.scanImageDBUpdateInterval = clusterConfig.connection.scanImageDBUpdateInterval
 
     if (
@@ -140,7 +151,7 @@ export class C2DEngineDocker extends C2DEngine {
     try {
       if (!existsSync(this.getStoragePath()))
         mkdirSync(this.getStoragePath(), { recursive: true })
-      if (!existsSync(this.trivyCachePath))
+      if (this.scanImages && !existsSync(this.trivyCachePath))
         mkdirSync(this.trivyCachePath, { recursive: true })
     } catch (e) {
       CORE_LOGGER.error(
@@ -586,6 +597,8 @@ export class C2DEngineDocker extends C2DEngine {
     const jobs = await this.db.getJobsByStatus(envs, [
       C2DStatusNumber.AlgorithmFailed,
       C2DStatusNumber.DiskQuotaExceeded,
+      C2DStatusNumber.VulnerableImage,
+      C2DStatusNumber.ImageScanFailed,
       C2DStatusNumber.ResultsFetchFailed,
       C2DStatusNumber.ResultsUploadFailed,
       C2DStatusNumber.JobSettle
@@ -1717,18 +1730,36 @@ export class C2DEngineDocker extends C2DEngine {
         return
       }
       // now that we have the image ready, check it for vulnerabilities
-      if (this.getC2DConfig().connection?.scanImages) {
-        const check = await this.checkImageVulnerability(job.containerImage)
+      if (this.scanImages) {
         const imageLogFile =
           this.getStoragePath() + '/' + job.jobId + '/data/logs/image.log'
-        const logText =
-          `Image scanned for vulnerabilities\nVulnerable:${check.vulnerable}\nSummary:` +
-          JSON.stringify(check.summary, null, 2)
-        CORE_LOGGER.debug(logText)
-        appendFileSync(imageLogFile, logText)
-        if (check.vulnerable) {
-          job.status = C2DStatusNumber.VulnerableImage
-          job.statusText = C2DStatusText.VulnerableImage
+        try {
+          const check = await this.checkImageVulnerability(job.containerImage)
+          const logText =
+            `Image scanned for vulnerabilities\nVulnerable:${check.vulnerable}\nSummary:` +
+            JSON.stringify(check.summary, null, 2)
+          CORE_LOGGER.debug(logText)
+          appendFileSync(imageLogFile, logText)
+          if (check.vulnerable) {
+            job.status = C2DStatusNumber.VulnerableImage
+            job.statusText = C2DStatusText.VulnerableImage
+            job.isRunning = false
+            job.dateFinished = String(Date.now() / 1000)
+            await this.db.updateJob(job)
+            await this.cleanupJob(job)
+            return
+          }
+        } catch (error) {
+          CORE_LOGGER.error(`Image scan failed for job ${job.jobId}: ${error.message}`)
+          try {
+            appendFileSync(imageLogFile, `Image scan failed: ${error.message}\n`)
+          } catch (logError) {
+            CORE_LOGGER.error(
+              `Could not write image scan log for job ${job.jobId}: ${logError.message}`
+            )
+          }
+          job.status = C2DStatusNumber.ImageScanFailed
+          job.statusText = C2DStatusText.ImageScanFailed
           job.isRunning = false
           job.dateFinished = String(Date.now() / 1000)
           await this.db.updateJob(job)
@@ -3158,213 +3189,146 @@ export class C2DEngineDocker extends C2DEngine {
     return stop - start
   }
 
-  private async checkscanDBImage(): Promise<boolean> {
-    // 1. Pull the image if it's missing locally
+  private async checkscanDBImage(): Promise<void> {
     try {
       await this.docker.getImage(trivyImage).inspect()
-      return true
     } catch (error) {
-      if (error.statusCode === 404) {
-        CORE_LOGGER.info(`Trivy not found. Pulling ${trivyImage}...`)
-        const stream = await this.docker.pull(trivyImage)
-
-        // We must wrap the pull stream in a promise to wait for completion
-        await new Promise((resolve, reject) => {
-          this.docker.modem.followProgress(stream, (err, res) =>
-            err ? reject(err) : resolve(res)
-          )
-        })
-
-        CORE_LOGGER.info('Pull complete.')
-        return true
-      } else {
-        CORE_LOGGER.error(`Unable to pull ${trivyImage}: ${error.message}`)
-        return true
+      if (error.statusCode !== 404) {
+        throw new Error(`Unable to inspect ${trivyImage}: ${error.message}`)
       }
+      CORE_LOGGER.info(`Trivy not found. Pulling ${trivyImage}...`)
+      const stream = await this.docker.pull(trivyImage)
+      await new Promise((resolve, reject) => {
+        this.docker.modem.followProgress(stream, (err, res) =>
+          err ? reject(err) : resolve(res)
+        )
+      })
+      await this.docker.getImage(trivyImage).inspect()
+      CORE_LOGGER.info('Pull complete.')
     }
   }
 
   private async scanDBUpdate(): Promise<void> {
     CORE_LOGGER.info('Starting Trivy database refresh cron')
-    const hasImage = await this.checkscanDBImage()
-    if (!hasImage) {
-      // we cannot update without image
-      return
-    }
-    const updater = await this.docker.createContainer({
-      Image: trivyImage,
-      Cmd: ['image', '--download-db-only'], // Only refreshes the cache
-      HostConfig: {
-        Binds: [`${this.trivyCachePath}:/root/.cache/trivy`]
+    await this.checkscanDBImage()
+    let updater: Dockerode.Container = null
+    try {
+      updater = await this.docker.createContainer({
+        Image: trivyImage,
+        Cmd: ['image', '--download-db-only'],
+        HostConfig: {
+          Binds: [`${this.trivyCachePath}:/root/.cache/trivy`]
+        }
+      })
+      await updater.start()
+      const result = await updater.wait()
+      if (result?.StatusCode !== 0) {
+        throw new Error(`Trivy database update exited with status ${result?.StatusCode}`)
       }
-    })
-
-    await updater.start()
-    await updater.wait()
-    await updater.remove()
-    CORE_LOGGER.info('Trivy database refreshed.')
+      CORE_LOGGER.info('Trivy database refreshed.')
+    } finally {
+      if (updater) await updater.remove({ force: true }).catch((): void => undefined)
+    }
   }
 
-  private async scanImage(imageName: string) {
-    if (!imageName || !imageName.trim()) return null
-    const hasImage = await this.checkscanDBImage()
-    if (!hasImage) {
-      // we cannot update without image
-      return
-    }
+  private async scanImage(imageName: string): Promise<unknown> {
+    if (!imageName || !imageName.trim()) throw new Error('Image name is empty')
+    await this.checkscanDBImage()
     CORE_LOGGER.debug(`Starting vulnerability check for ${imageName}`)
-    const container = await this.docker.createContainer({
-      Image: trivyImage,
-      Cmd: [
-        'image',
-        '--format',
-        'json',
-        '--quiet',
-        '--no-progress',
-        '--skip-db-update',
-        '--severity',
-        'CRITICAL,HIGH',
-        imageName
-      ],
-      HostConfig: {
-        Binds: [
-          '/var/run/docker.sock:/var/run/docker.sock', // To see local images
-          `${this.trivyCachePath}:/root/.cache/trivy` // THE CACHE BIND
-        ]
-      }
-    })
-
-    await container.start()
-
-    // Wait for completion, then parse from *demuxed stdout* to avoid corrupt JSON
-    // due to Docker multiplexed log framing.
-    const logsStream = await container.logs({
-      follow: true,
-      stdout: true,
-      stderr: true
-    })
-
-    const outStream = new PassThrough()
-    const errStream = new PassThrough()
-    outStream.resume()
-    errStream.resume()
-
-    const rawChunks: Buffer[] = []
-    outStream.on('data', (chunk) => {
-      rawChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-    })
-
-    container.modem.demuxStream(logsStream, outStream, errStream)
-
-    const logsDrained = new Promise<void>((resolve, reject) => {
-      const done = () => resolve()
-      logsStream.once('end', done)
-      logsStream.once('close', done)
-      logsStream.once('error', reject)
-    })
-
-    await container.wait()
-    // Wait for the docker log stream to finish producing data.
-    await logsDrained
-
-    await container.remove()
-    CORE_LOGGER.debug(`Vulnerability check for ${imageName} finished`)
-
+    let container: Dockerode.Container = null
     try {
-      const rawData = Buffer.concat(rawChunks).toString('utf8')
-      // Trivy's `--format json` output is a JSON object (it includes `SchemaVersion`).
-      // Prefer extracting the JSON object only; do not attempt array parsing since
-      // Trivy help/usage output may include `[` tokens (e.g. "[flags]") that are not JSON.
-      const firstBrace = rawData.indexOf('{')
-      const lastBrace = rawData.lastIndexOf('}')
-
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        const jsonText = rawData.slice(firstBrace, lastBrace + 1).trim()
-        if (!jsonText.includes('"SchemaVersion"')) {
-          CORE_LOGGER.error(
-            'Trivy output did not contain SchemaVersion in extracted JSON. Truncated output: ' +
-              rawData.slice(0, 500)
-          )
-          return null
+      container = await this.docker.createContainer({
+        Image: trivyImage,
+        Cmd: [
+          'image',
+          '--format',
+          'json',
+          '--quiet',
+          '--no-progress',
+          '--skip-db-update',
+          '--severity',
+          this.scanImageRejectSeverities.join(','),
+          imageName
+        ],
+        HostConfig: {
+          Binds: [
+            '/var/run/docker.sock:/var/run/docker.sock',
+            `${this.trivyCachePath}:/root/.cache/trivy`
+          ]
         }
-        return JSON.parse(jsonText)
-      }
+      })
+      await container.start()
+      const logsStream = await container.logs({
+        follow: true,
+        stdout: true,
+        stderr: true
+      })
+      const outStream = new PassThrough()
+      const errStream = new PassThrough()
+      outStream.resume()
+      errStream.resume()
 
-      CORE_LOGGER.error(
-        `Failed to locate JSON in Trivy output. Truncated output: ${rawData.slice(
-          0,
-          1000
-        )}`
-      )
-      return null
-    } catch (e) {
-      CORE_LOGGER.error('Failed to parse Trivy output: ' + e.message)
-      return null
+      const rawChunks: Buffer[] = []
+      const errorChunks: Buffer[] = []
+      let reportBytes = 0
+      let errorBytes = 0
+      let reportTooLarge = false
+      outStream.on('data', (chunk) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        reportBytes += buffer.length
+        if (reportBytes > MAX_TRIVY_REPORT_BYTES) reportTooLarge = true
+        else rawChunks.push(buffer)
+      })
+      errStream.on('data', (chunk) => {
+        if (errorBytes >= 4096) return
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        const bounded = buffer.subarray(0, 4096 - errorBytes)
+        errorChunks.push(bounded)
+        errorBytes += bounded.length
+      })
+      container.modem.demuxStream(logsStream, outStream, errStream)
+
+      const logsDrained = new Promise<void>((resolve, reject) => {
+        const done = () => resolve()
+        logsStream.once('end', done)
+        logsStream.once('close', done)
+        logsStream.once('error', reject)
+      })
+      const scanResult = await container.wait()
+      await logsDrained
+
+      if (scanResult?.StatusCode !== 0) {
+        const stderr = Buffer.concat(errorChunks).toString('utf8').slice(0, 4096)
+        throw new Error(
+          `Trivy exited with status ${scanResult?.StatusCode}${stderr ? `: ${stderr}` : ''}`
+        )
+      }
+      if (reportTooLarge) throw new Error('Trivy report exceeds the size limit')
+
+      const reportBuffer = Buffer.concat(rawChunks)
+      if (reportBuffer.length === 0) throw new Error('Trivy returned an empty report')
+      let reportText: string
+      try {
+        reportText = new TextDecoder('utf-8', { fatal: true }).decode(reportBuffer)
+      } catch {
+        throw new Error('Trivy report is not valid UTF-8')
+      }
+      let report: unknown
+      try {
+        report = JSON.parse(reportText)
+      } catch {
+        throw new Error('Trivy report is not valid JSON')
+      }
+      CORE_LOGGER.debug(`Vulnerability check for ${imageName} finished`)
+      return report
+    } finally {
+      if (container) await container.remove({ force: true }).catch((): void => undefined)
     }
   }
 
   private async checkImageVulnerability(imageName: string) {
     const report = await this.scanImage(imageName)
-    if (!report) {
-      //
-      return { vulnerable: false, summary: 'failed to scan' }
-    }
-    // Results is an array (one entry per OS package manager / language)
-    const allVulnerabilities = report.Results.flatMap((r: any) => r.Vulnerabilities || [])
-
-    const severityRank = (sev: string) => {
-      switch (sev) {
-        case 'CRITICAL':
-          return 3
-        case 'HIGH':
-          return 2
-        default:
-          return 1
-      }
-    }
-
-    const summary = {
-      total: allVulnerabilities.length,
-      critical: allVulnerabilities.filter((v: any) => v.Severity === 'CRITICAL').length,
-      high: allVulnerabilities.filter((v: any) => v.Severity === 'HIGH').length,
-      list: (() => {
-        // Present the most important vulnerabilities first.
-        const sorted = [...allVulnerabilities].sort((a: any, b: any) => {
-          const diff = severityRank(b.Severity) - severityRank(a.Severity)
-          if (diff !== 0) return diff
-          return String(a.VulnerabilityID || '').localeCompare(
-            String(b.VulnerabilityID || '')
-          )
-        })
-
-        const list: Array<{
-          severity: string
-          id: string
-          package: string
-          title: string
-        }> = []
-
-        for (const v of sorted) {
-          list.push({
-            severity: v.Severity,
-            id: v.VulnerabilityID,
-            package: v.PkgName,
-            title: v.Title || 'No description'
-          })
-        }
-
-        return list
-      })()
-    }
-
-    if (summary.critical > 0) {
-      return {
-        vulnerable: true,
-        summary
-      }
-    }
-
-    return { vulnerable: false, summary }
+    return evaluateTrivyReport(report, this.scanImageRejectSeverities)
   }
 }
 
