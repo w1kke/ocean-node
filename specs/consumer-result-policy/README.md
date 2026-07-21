@@ -4,10 +4,10 @@
 
 Status: active, last updated 2026-07-21.
 
-Slice 01 is complete on `feature/consumer-result-policy`. Implement the explicit result policy next, followed by the fail-closed scanner. Keep Brainstem schema logic, marketplace, chain, Crab, mobile, and CI publication work out of this feature.
+Slices 01 and 02 are complete on `feature/consumer-result-policy`. Implement the fail-closed scanner next, then rerun Marine's strict local result checkpoint. Keep Brainstem schema logic, marketplace, chain, Crab, mobile, and CI publication work out of this feature.
 
 - [x] [01 — consumer job boundary](slices/01-consumer-job-boundary.md)
-- [ ] [02 — explicit result release](slices/02-explicit-result-release.md)
+- [x] [02 — explicit result release](slices/02-explicit-result-release.md)
 - [ ] [03 — fail-closed image scanning](slices/03-fail-closed-image-scanning.md)
 
 ## Goal

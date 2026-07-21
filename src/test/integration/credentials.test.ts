@@ -125,7 +125,7 @@ describe('**********         [Credentials Flow] - Should run a complete node flo
           JSON.stringify([await publisherAccount.getAddress()]),
           JSON.stringify([await publisherAccount.getAddress()]),
           `${homedir}/.ocean/ocean-contracts/artifacts/address.json`,
-          '[{"socketPath":"/var/run/docker.sock","environments":[{"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
+          '[{"socketPath":"/var/run/docker.sock","environments":[{"consumerResultPolicy":{"mode":"archive"},"storageExpiry":604800,"maxJobDuration":3600,"minJobDuration":60,"resources":[{"id":"cpu","total":4,"max":4,"min":1,"type":"cpu"},{"id":"ram","total":10,"max":10,"min":1,"type":"ram"},{"id":"disk","total":10,"max":10,"min":0,"type":"disk"}],"fees":{"' +
             DEVELOPMENT_CHAIN_ID +
             '":[{"feeToken":"' +
             paymentToken +

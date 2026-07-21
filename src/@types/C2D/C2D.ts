@@ -109,6 +109,10 @@ export interface ComputeEnvironmentFreeOptions {
   access: ComputeAccessList
   allowImageBuild?: boolean
 }
+export type ConsumerResultPolicy =
+  | { mode: 'archive' }
+  | { mode: 'singleJson'; maxBytes: number }
+
 export interface ComputeEnvironmentBaseConfig {
   description?: string // v1
   storageExpiry?: number // amount of seconds for storage
@@ -121,6 +125,7 @@ export interface ComputeEnvironmentBaseConfig {
   free?: ComputeEnvironmentFreeOptions
   platform: RunningPlatform
   enableNetwork?: boolean // whether network is enabled for algorithm containers
+  consumerResultPolicy: ConsumerResultPolicy
 }
 
 export interface ComputeRuntimes {
@@ -154,6 +159,7 @@ export interface C2DEnvironmentConfig {
   free?: ComputeEnvironmentFreeOptions
   resources?: ComputeResource[]
   enableNetwork?: boolean // whether network is enabled for algorithm containers
+  consumerResultPolicy: ConsumerResultPolicy
 }
 
 export interface C2DDockerConfig {

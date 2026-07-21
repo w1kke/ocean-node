@@ -99,6 +99,9 @@
       "socketPath": "/var/run/docker.sock",
       "environments": [
         {
+          "consumerResultPolicy": {
+            "mode": "archive"
+          },
           "storageExpiry": 604800,
           "maxJobDuration": 3600,
           "minJobDuration": 60,

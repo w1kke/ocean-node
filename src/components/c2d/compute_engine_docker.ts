@@ -23,7 +23,8 @@ import type {
   ComputeEnvFees,
   ComputeResource,
   C2DEnvironmentConfig,
-  ComputeResourcesPricingInfo
+  ComputeResourcesPricingInfo,
+  ConsumerResultPolicy
 } from '../../@types/C2D/C2D.js'
 import { BASE_CHAIN_ID, USDC_TOKEN_ADDRESS_BASE } from '../../utils/config.js'
 import { C2DEngine } from './compute_engine_base.js'
@@ -45,7 +46,8 @@ import {
   appendFileSync,
   statSync,
   statfsSync,
-  createReadStream
+  createReadStream,
+  renameSync
 } from 'fs'
 import { pipeline } from 'node:stream/promises'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
@@ -55,6 +57,7 @@ import { FindDdoHandler } from '../core/handler/ddoHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { KeyManager } from '../KeyManager/index.js'
 import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.js'
+import { readSingleJsonResultArchive } from './consumerResult.js'
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { Service } from '@oceanprotocol/ddo-js'
 import { getOceanTokenAddressForChain } from '../../utils/address.js'
@@ -232,7 +235,8 @@ export class C2DEngineDocker extends C2DEngine {
         ]
       },
       fees: benchmarkFees,
-      enableNetwork: true
+      enableNetwork: true,
+      consumerResultPolicy: { mode: 'archive' }
     }
 
     envConfig.environments.push(benchmarkEnv)
@@ -364,7 +368,8 @@ export class C2DEngineDocker extends C2DEngine {
         queMaxWaitTimeFree: 0,
         runMaxWaitTime: 0,
         runMaxWaitTimeFree: 0,
-        enableNetwork: envDef.enableNetwork
+        enableNetwork: envDef.enableNetwork,
+        consumerResultPolicy: envDef.consumerResultPolicy
       }
 
       if (envDef.storageExpiry !== undefined) env.storageExpiry = envDef.storageExpiry
@@ -394,7 +399,11 @@ export class C2DEngineDocker extends C2DEngine {
       env.id =
         this.getC2DConfig().hash +
         '-' +
-        create256Hash(JSON.stringify(env.fees) + envIdSuffix)
+        create256Hash(
+          JSON.stringify(env.fees) +
+            JSON.stringify(env.consumerResultPolicy) +
+            envIdSuffix
+        )
 
       this.envs.push(env)
       CORE_LOGGER.info(
@@ -1382,21 +1391,22 @@ export class C2DEngineDocker extends C2DEngine {
   protected async getResults(jobId: string): Promise<ComputeResult[]> {
     const res: ComputeResult[] = []
     try {
-      // check if we have an output request.
-      const jobDb = await this.db.getJob(jobId)
-      if (jobDb.length < 1 || !jobDb[0].output) {
-        const outputStat = statSync(
-          this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar'
-        )
-        if (outputStat) {
-          res.push({
-            filename: 'outputs.tar',
-            filesize: outputStat.size,
-            type: 'output',
-            index: 0
-          })
-        }
-      }
+      const jobs = await this.db.getJob(jobId)
+      if (jobs.length !== 1 || jobs[0].output) return res
+      const environment = await this.getJobEnvironment(jobs[0])
+      const policy = environment?.consumerResultPolicy
+      if (!policy) return res
+
+      const filename = policy.mode === 'singleJson' ? 'result.json' : 'outputs.tar'
+      const outputStat = statSync(
+        this.getStoragePath() + '/' + jobId + '/data/outputs/' + filename
+      )
+      res.push({
+        filename,
+        filesize: outputStat.size,
+        type: 'output',
+        index: 0
+      })
     } catch (e) {}
     return res
   }
@@ -1445,13 +1455,22 @@ export class C2DEngineDocker extends C2DEngine {
     const results = await this.getResults(jobId)
     for (const i of results) {
       if (i.index === index && i.type === 'output') {
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset >= i.filesize) {
+          return null
+        }
+        const filePath =
+          this.getStoragePath() + '/' + jobId + '/data/outputs/' + i.filename
+        const contentType =
+          i.filename === 'result.json'
+            ? 'application/json; charset=utf-8'
+            : 'application/octet-stream'
         return {
-          stream: createReadStream(
-            this.getStoragePath() + '/' + jobId + '/data/outputs/outputs.tar',
-            offset > 0 ? { start: offset } : undefined
-          ),
+          stream: createReadStream(filePath, offset > 0 ? { start: offset } : undefined),
           headers: {
-            'Content-Type': 'application/octet-stream'
+            'Content-Type': contentType,
+            'Content-Length': String(Math.max(0, i.filesize - offset)),
+            'Cache-Control': 'private, no-store',
+            'X-Content-Type-Options': 'nosniff'
           }
         }
       }
@@ -2065,64 +2084,117 @@ export class C2DEngineDocker extends C2DEngine {
         job.terminationDetails.OOMKilled = null
         job.terminationDetails.exitCode = null
       }
-      const outputsArchivePath =
-        this.getStoragePath() + '/' + job.jobId + '/data/outputs/outputs.tar'
+      const environment = await this.getJobEnvironment(job)
+      const resultPolicy: ConsumerResultPolicy = environment?.consumerResultPolicy
+      let singleJsonResult: Buffer = null
 
-      try {
-        if (container) {
-          // if we have an output request, stream to remote storage; otherwise write to local file
+      if (!container || !resultPolicy) {
+        CORE_LOGGER.error(`Missing result policy or container for job ${job.jobId}`)
+        job.status = C2DStatusNumber.ResultsFetchFailed
+        job.statusText = C2DStatusText.ResultsFetchFailed
+      } else if (resultPolicy.mode === 'singleJson') {
+        try {
+          singleJsonResult = await readSingleJsonResultArchive(
+            (await container.getArchive({
+              path: '/data/outputs/result.json'
+            })) as unknown as Readable,
+            resultPolicy.maxBytes
+          )
+        } catch (e) {
+          CORE_LOGGER.error('Failed to validate result.json: ' + e.message)
+          job.status = C2DStatusNumber.ResultsFetchFailed
+          job.statusText = C2DStatusText.ResultsFetchFailed
+        }
+      }
+
+      if (
+        resultPolicy &&
+        job.status !== C2DStatusNumber.ResultsFetchFailed &&
+        container
+      ) {
+        const outputsPath = this.getStoragePath() + '/' + job.jobId + '/data/outputs/'
+        try {
+          let output: ComputeOutput = null
+          let storage: Storage = null
           if (job.output) {
             const decryptedOutput = await this.keyManager.decrypt(
               Uint8Array.from(Buffer.from(job.output, 'hex')),
               EncryptMethod.ECIES
             )
-            const output = JSON.parse(decryptedOutput.toString()) as ComputeOutput
-            const storage = Storage.getStorageClass(
-              output.remoteStorage,
-              this.getConfig()
-            )
+            output = JSON.parse(decryptedOutput.toString()) as ComputeOutput
+            storage = Storage.getStorageClass(output.remoteStorage, this.getConfig())
+          }
 
-            if (
-              storage.hasUpload &&
-              'upload' in storage &&
-              typeof storage.upload === 'function'
-            ) {
-              let uploadStream = (await container.getArchive({
-                path: '/data/outputs'
-              })) as unknown as Readable
-              if (output.encryption && output.encryption?.key) {
-                const enc = output.encryption
-                const key = Uint8Array.from(Buffer.from(enc.key, 'hex'))
+          const canUpload =
+            storage?.hasUpload &&
+            'upload' in storage &&
+            typeof storage.upload === 'function'
+
+          if (resultPolicy.mode === 'singleJson') {
+            if (canUpload) {
+              let uploadStream = Readable.from([singleJsonResult])
+              if (output.encryption?.key) {
+                const key = Uint8Array.from(Buffer.from(output.encryption.key, 'hex'))
                 uploadStream = this.keyManager.encryptStream(
                   uploadStream,
-                  enc.encryptMethod,
+                  output.encryption.encryptMethod,
                   key
-                )
+                ) as Readable
               }
-              const fname =
+              const filename =
+                'result-' +
+                this.getC2DConfig().hash +
+                '-' +
+                job.jobId +
+                (output.encryption?.key ? '.json.enc' : '.json')
+              await (
+                storage as unknown as {
+                  upload: (name: string, stream: Readable) => Promise<unknown>
+                }
+              ).upload(filename, uploadStream)
+            } else {
+              const resultPath = outputsPath + 'result.json'
+              const temporaryResultPath = resultPath + '.tmp'
+              try {
+                writeFileSync(temporaryResultPath, singleJsonResult, { mode: 0o600 })
+                renameSync(temporaryResultPath, resultPath)
+              } finally {
+                rmSync(temporaryResultPath, { force: true })
+              }
+            }
+          } else {
+            const archiveStream = (await container.getArchive({
+              path: '/data/outputs'
+            })) as unknown as Readable
+            if (canUpload) {
+              let uploadStream = archiveStream
+              if (output.encryption?.key) {
+                const key = Uint8Array.from(Buffer.from(output.encryption.key, 'hex'))
+                uploadStream = this.keyManager.encryptStream(
+                  uploadStream,
+                  output.encryption.encryptMethod,
+                  key
+                ) as Readable
+              }
+              const filename =
                 'outputs-' + this.getC2DConfig().hash + '-' + job.jobId + '.tar'
               await (
                 storage as unknown as {
                   upload: (name: string, stream: Readable) => Promise<unknown>
                 }
-              ).upload(fname, uploadStream)
+              ).upload(filename, uploadStream)
             } else {
               await pipeline(
-                await container.getArchive({ path: '/data/outputs' }),
-                createWriteStream(outputsArchivePath)
+                archiveStream,
+                createWriteStream(outputsPath + 'outputs.tar')
               )
             }
-          } else {
-            await pipeline(
-              await container.getArchive({ path: '/data/outputs' }),
-              createWriteStream(outputsArchivePath)
-            )
           }
+        } catch (e) {
+          CORE_LOGGER.error('Failed to publish compute result: ' + e.message)
+          job.status = C2DStatusNumber.ResultsUploadFailed
+          job.statusText = C2DStatusText.ResultsUploadFailed
         }
-      } catch (e) {
-        CORE_LOGGER.error('Failed to get outputs archive: ' + e.message)
-        job.status = C2DStatusNumber.ResultsUploadFailed
-        job.statusText = C2DStatusText.ResultsUploadFailed
       }
       job.isRunning = false
       job.dateFinished = String(Date.now() / 1000)

@@ -39,6 +39,7 @@ describe('consumer compute result access', () => {
     const job = {
       jobId,
       owner,
+      environment: 'env-1',
       additionalViewers: ['0x0000000000000000000000000000000000000002']
     } as DBComputeJob
     const db = { getJob: sinon.stub().resolves([job]) } as any
@@ -49,6 +50,9 @@ describe('consumer compute result access', () => {
       connection: {}
     } as any
     const engine = new C2DEngineDocker(cluster, db, {} as any, {} as any, {} as any)
+    sinon
+      .stub(engine, 'getComputeEnvironments')
+      .resolves([{ id: 'env-1', consumerResultPolicy: { mode: 'archive' } } as any])
     const dataPath = path.join(engine.getStoragePath(), jobId, 'data')
     mkdirSync(path.join(dataPath, 'logs'), { recursive: true })
     mkdirSync(path.join(dataPath, 'outputs'), { recursive: true })
@@ -70,6 +74,26 @@ describe('consumer compute result access', () => {
     const result = await engine.getComputeJobResult(owner, jobId, 0)
     expect(await streamText(result.stream)).to.equal('released output')
     expect(await engine.getComputeJobResult(owner, jobId, 1)).to.equal(null)
+
+    const jsonBody = '{"approved":true}'
+    writeFileSync(path.join(dataPath, 'outputs', 'result.json'), jsonBody)
+    ;(engine.getComputeEnvironments as sinon.SinonStub).resolves([
+      {
+        id: 'env-1',
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 1024 }
+      } as any
+    ])
+    const strictStatuses = await engine.getComputeJobStatus(owner, null, jobId)
+    expect(strictStatuses[0].results).to.deep.equal([
+      { filename: 'result.json', filesize: jsonBody.length, type: 'output', index: 0 }
+    ])
+    const strictResult = await engine.getComputeJobResult(owner, jobId, 0)
+    expect(await streamText(strictResult.stream)).to.equal(jsonBody)
+    expect(strictResult.headers).to.include({
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    })
 
     let denied: Error = null
     try {

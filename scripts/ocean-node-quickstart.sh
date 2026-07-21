@@ -241,6 +241,9 @@ if [ -z "$DOCKER_COMPUTE_ENVIRONMENTS" ]; then
       "socketPath": "/var/run/docker.sock",
       "environments": [
         {
+          "consumerResultPolicy": {
+            "mode": "archive"
+          },
           "storageExpiry": 604800,
           "maxJobDuration": 36000,
           "minJobDuration": 60,

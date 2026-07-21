@@ -8,6 +8,7 @@ import {
   setupEnvironment
 } from '../utils/utils.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
+import { C2DEnvironmentConfigSchema } from '../../utils/config/schemas.js'
 
 let config: OceanNodeConfig
 describe('Should validate configuration from JSON', () => {
@@ -58,6 +59,47 @@ describe('Should validate configuration from JSON', () => {
   after(() => {
     delete process.env.CONFIG_PATH
     delete process.env.PRIVATE_KEY
+  })
+})
+
+describe('Should require an explicit consumer result policy', () => {
+  const baseEnvironment = {
+    resources: [{ id: 'disk', total: 1 }],
+    free: { resources: [{ id: 'disk', max: 1 }] }
+  }
+
+  it('rejects an environment with no result policy', () => {
+    expect(C2DEnvironmentConfigSchema.safeParse(baseEnvironment).success).to.equal(false)
+  })
+
+  it('accepts explicit archive and bounded single JSON policies', () => {
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'archive' }
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 262144 }
+      }).success
+    ).to.equal(true)
+  })
+
+  it('rejects unbounded and oversized single JSON policies', () => {
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'singleJson' }
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 10 * 1024 * 1024 + 1 }
+      }).success
+    ).to.equal(false)
   })
 })
 

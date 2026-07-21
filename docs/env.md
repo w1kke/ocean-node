@@ -141,58 +141,63 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
   {
     "socketPath": "/var/run/docker.sock",
     "scanImages": true,
-    "enableNetwork": false,
     "imageRetentionDays": 7,
     "imageCleanupInterval": 86400,
-    "resources": [
+    "environments": [
       {
-        "id": "disk",
-        "total": 10
-      }
-    ],
-    "storageExpiry": 604800,
-    "maxJobDuration": 3600,
-    "minJobDuration": 60,
-    "access": {
-      "addresses": ["0x123", "0x456"],
-      "accessLists": []
-    },
-    "fees": {
-      "1": [
-        {
-          "feeToken": "0x123",
-          "prices": [
+        "consumerResultPolicy": { "mode": "archive" },
+        "enableNetwork": false,
+        "resources": [
+          {
+            "id": "disk",
+            "total": 10
+          }
+        ],
+        "storageExpiry": 604800,
+        "maxJobDuration": 3600,
+        "minJobDuration": 60,
+        "access": {
+          "addresses": ["0x123", "0x456"],
+          "accessLists": []
+        },
+        "fees": {
+          "1": [
+            {
+              "feeToken": "0x123",
+              "prices": [
+                {
+                  "id": "cpu",
+                  "price": 1
+                }
+              ]
+            }
+          ]
+        },
+        "free": {
+          "maxJobDuration": 60,
+          "minJobDuration": 10,
+          "maxJobs": 3,
+          "access": {
+            "addresses": [],
+            "accessLists": []
+          },
+          "resources": [
             {
               "id": "cpu",
-              "price": 1
+              "max": 1
+            },
+            {
+              "id": "ram",
+              "max": 1
+            },
+            {
+              "id": "disk",
+              "max": 1
             }
           ]
         }
-      ]
-    },
-    "free": {
-      "maxJobDuration": 60,
-      "minJobDuration": 10,
-      "maxJobs": 3,
-      "access": {
-        "addresses": [],
-        "accessLists": ["0x789"]
-      },
-      "resources": [
-        {
-          "id": "cpu",
-          "max": 1
-        },
-        {
-          "id": "ram",
-          "max": 1
-        },
-        {
-          "id": "disk",
-          "max": 1
-        }
-      ]
-    }
+      }
+    ]
   }
 ]
 ```
@@ -202,6 +207,7 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
 - **socketPath**: Path to the Docker socket (e.g., docker.sock).
 - **scanImages**: Whether Docker images should be scanned for vulnerabilities using Trivy. If enabled and critical vulnerabilities are found, the C2D job is rejected.
 - **scanImageDBUpdateInterval**: How often to update the vulnerability database, in seconds. Default: 43200 (12 hours)
+- **consumerResultPolicy**: Required per environment. Use `{ "mode": "archive" }` only for intentional legacy output, or `{ "mode": "singleJson", "maxBytes": 262144 }` to release exactly one bounded `result.json`.
 - **enableNetwork**: Whether networking is enabled for algorithm containers. Default: false
 - **imageRetentionDays** - how long docker images are kept, in days. Default: 7
 - **imageCleanupInterval** - how often to run cleanup for docker images, in seconds. Min: 3600 (1hour), Default: 86400 (24 hours)

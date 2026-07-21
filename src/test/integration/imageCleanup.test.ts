@@ -37,6 +37,7 @@ describe('**********         Docker Image Cleanup Integration Tests', () => {
             imageCleanupInterval: 60, // 1 minute for testing
             environments: [
               {
+                consumerResultPolicy: { mode: 'archive' },
                 storageExpiry: 604800,
                 maxJobDuration: 3600,
                 minJobDuration: 60,

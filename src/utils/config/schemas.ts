@@ -216,6 +216,20 @@ export const ComputeEnvironmentFreeOptionsSchema = z.object({
   allowImageBuild: z.boolean().optional().default(false)
 })
 
+export const ConsumerResultPolicySchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('archive') }).strict(),
+  z
+    .object({
+      mode: z.literal('singleJson'),
+      maxBytes: z
+        .number()
+        .int()
+        .positive()
+        .max(10 * 1024 * 1024)
+    })
+    .strict()
+])
+
 export const C2DEnvironmentConfigSchema = z
   .object({
     id: z.string().optional(),
@@ -236,7 +250,8 @@ export const C2DEnvironmentConfigSchema = z
       .optional(),
     free: ComputeEnvironmentFreeOptionsSchema.optional(),
     resources: z.array(ComputeResourceSchema).optional(),
-    enableNetwork: z.boolean().optional().default(false)
+    enableNetwork: z.boolean().optional().default(false),
+    consumerResultPolicy: ConsumerResultPolicySchema
   })
   .refine(
     (data) =>
