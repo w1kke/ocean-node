@@ -31,17 +31,43 @@ export function assertPrivateDatasetJob(
   }
 }
 
-function requestHeaders(file: UrlFileObject, jobId: string): Record<string, string> {
-  const headers: Record<string, string> = {}
-  for (const [key, value] of Object.entries(file.headers ?? {})) {
+export function assertPrivateDatasetConfiguration(
+  policy: PrivateDatasetPolicy,
+  environment: NodeJS.ProcessEnv = process.env
+): void {
+  const bearerToken = environment[policy.bearerTokenEnv]
+  if (
+    typeof bearerToken !== 'string' ||
+    bearerToken.length < 32 ||
+    bearerToken.includes('\n') ||
+    bearerToken.includes('\r')
+  ) {
+    throw new PrivateDatasetError('private_dataset_credential_invalid')
+  }
+}
+
+function requestHeaders(
+  file: UrlFileObject,
+  jobId: string,
+  policy: PrivateDatasetPolicy,
+  environment: NodeJS.ProcessEnv
+): Record<string, string> {
+  const suppliedHeaders = Object.entries(file.headers ?? {})
+  for (const [key] of suppliedHeaders) {
     if (key.toLowerCase() === JOB_HEADER) {
       throw new PrivateDatasetError('private_dataset_job_header_is_reserved')
     }
-    headers[key] = value
   }
-  headers['Accept-Encoding'] = 'identity'
-  headers['X-Ocean-Compute-Job-Id'] = jobId
-  return headers
+  if (suppliedHeaders.length > 0) {
+    throw new PrivateDatasetError('private_dataset_headers_not_allowed')
+  }
+  assertPrivateDatasetConfiguration(policy, environment)
+  return {
+    Accept: 'application/json',
+    'Accept-Encoding': 'identity',
+    Authorization: `Bearer ${environment[policy.bearerTokenEnv]}`,
+    'X-Ocean-Compute-Job-Id': jobId
+  }
 }
 
 function requiredHeader(value: unknown, pattern: RegExp, code: string): string {
@@ -55,7 +81,8 @@ export async function downloadPrivateDataset(
   file: UrlFileObject,
   destination: string,
   jobId: string,
-  policy: PrivateDatasetPolicy
+  policy: PrivateDatasetPolicy,
+  environment: NodeJS.ProcessEnv = process.env
 ): Promise<{ bytes: number; checksum: string }> {
   const partial = `${destination}.part`
   let responseStream: Readable | undefined
@@ -78,7 +105,7 @@ export async function downloadPrivateDataset(
     const response = await axios({
       method: 'get',
       url: file.url,
-      headers: requestHeaders(file, jobId),
+      headers: requestHeaders(file, jobId, policy, environment),
       responseType: 'stream',
       timeout: 30000,
       maxRedirects: 0,

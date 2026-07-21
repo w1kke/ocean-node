@@ -268,7 +268,8 @@ export const C2DEnvironmentConfigSchema = z
           .max(16 * 1024 * 1024),
         approvedAlgorithmImage: z
           .string()
-          .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/)
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
+        bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
       })
       .strict()
       .optional()

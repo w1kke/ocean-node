@@ -68,7 +68,11 @@ import { dockerRegistryAuth, OceanNodeConfig } from '../../@types/OceanNode.js'
 import { EncryptMethod, UrlFileObject } from '../../@types/fileObject.js'
 import { getAddress, ZeroAddress } from 'ethers'
 import { AccessList } from '../../@types/AccessList.js'
-import { assertPrivateDatasetJob, downloadPrivateDataset } from './privateDataset.js'
+import {
+  assertPrivateDatasetConfiguration,
+  assertPrivateDatasetJob,
+  downloadPrivateDataset
+} from './privateDataset.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -441,6 +445,7 @@ export class C2DEngineDocker extends C2DEngine {
       )
 
       if (envDef.privateDataset) {
+        assertPrivateDatasetConfiguration(envDef.privateDataset)
         this.privateDatasetPolicies.set(env.id, envDef.privateDataset)
       }
 

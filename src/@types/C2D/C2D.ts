@@ -117,6 +117,7 @@ export interface PrivateDatasetPolicy {
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
+  bearerTokenEnv: string
 }
 
 export interface ComputeEnvironmentBaseConfig {

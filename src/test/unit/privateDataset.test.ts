@@ -23,19 +23,23 @@ describe('Private dataset provisioning', () => {
   let destination: string
   let requestCount: number
   let receivedJobId: string
+  let receivedAuthorization: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
   let file: UrlFileObject
+  let environment: NodeJS.ProcessEnv
 
   beforeEach(async () => {
     requestCount = 0
     receivedJobId = ''
+    receivedAuthorization = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
       requestCount += 1
       receivedJobId = String(request.headers['x-ocean-compute-job-id'] ?? '')
+      receivedAuthorization = String(request.headers.authorization ?? '')
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
         response.end()
@@ -60,12 +64,17 @@ describe('Private dataset provisioning', () => {
     const url = `http://127.0.0.1:${address.port}/private-dataset`
     directory = mkdtempSync(path.join(tmpdir(), 'private-dataset-test-'))
     destination = path.join(directory, 'dataset.json')
-    policy = { url, maxBytes: 1024, approvedAlgorithmImage: IMAGE }
+    policy = {
+      url,
+      maxBytes: 1024,
+      approvedAlgorithmImage: IMAGE,
+      bearerTokenEnv: 'CRAB_C2D_TEST_TOKEN'
+    }
+    environment = { CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough' }
     file = {
       type: 'url',
       url,
-      method: 'get',
-      headers: { Authorization: 'Bearer generated-test-token' }
+      method: 'get'
     }
   })
 
@@ -78,7 +87,7 @@ describe('Private dataset provisioning', () => {
 
   async function expectFailure(code: string): Promise<void> {
     try {
-      await downloadPrivateDataset(file, destination, JOB_ID, policy)
+      await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
       expect.fail('expected private dataset provisioning to fail')
     } catch (error) {
       expect(error).to.be.instanceOf(PrivateDatasetError)
@@ -91,10 +100,19 @@ describe('Private dataset provisioning', () => {
   }
 
   it('fetches exactly once with the opaque job ID and verifies the file', async () => {
-    const result = await downloadPrivateDataset(file, destination, JOB_ID, policy)
+    const result = await downloadPrivateDataset(
+      file,
+      destination,
+      JOB_ID,
+      policy,
+      environment
+    )
 
     expect(requestCount).to.equal(1)
     expect(receivedJobId).to.equal(JOB_ID)
+    expect(receivedAuthorization).to.equal(
+      'Bearer generated-test-token-that-is-long-enough'
+    )
     expect(readFileSync(destination)).to.deep.equal(body)
     expect(statSync(destination).mode & 0o777).to.equal(0o600)
     expect(result.bytes).to.equal(body.length)
@@ -102,8 +120,20 @@ describe('Private dataset provisioning', () => {
   })
 
   it('rejects caller control of the audit-correlation header before fetching', async () => {
+    file.headers = {}
     file.headers['x-Ocean-Compute-Job-Id'] = 'caller-controlled'
     await expectFailure('private_dataset_job_header_is_reserved')
+    expect(requestCount).to.equal(0)
+  })
+
+  it('rejects all caller-supplied headers and missing service credentials', async () => {
+    file.headers = { Authorization: 'Bearer caller-controlled' }
+    await expectFailure('private_dataset_headers_not_allowed')
+    expect(requestCount).to.equal(0)
+
+    delete file.headers
+    environment = {}
+    await expectFailure('private_dataset_credential_invalid')
     expect(requestCount).to.equal(0)
   })
 
