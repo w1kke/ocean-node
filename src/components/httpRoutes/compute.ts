@@ -1,4 +1,4 @@
-import express from 'express'
+import express, { Response } from 'express'
 import {
   ComputeGetEnvironmentsHandler,
   PaidComputeStartHandler,
@@ -29,13 +29,34 @@ import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants
 import { Readable } from 'stream'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
 import { LOG_LEVELS_STR } from '../../utils/logging/Logger.js'
+import { redactCommandForLogging } from './validateCommands.js'
+import { P2PCommandResponse } from '../../@types/OceanNode.js'
 
 export const computeRoutes = express.Router()
+
+export async function sendComputeStatusResponse(
+  res: Response,
+  response: P2PCommandResponse
+): Promise<void> {
+  if (response.status.httpStatus >= 400) {
+    const error =
+      response.status.error ??
+      (response.stream ? await streamToString(response.stream as Readable) : null)
+    res.status(response.status.httpStatus).send(error)
+    return
+  }
+  if (!response.stream) {
+    res.status(response.status.httpStatus).send(response.status.error)
+    return
+  }
+  const jobs = await streamToObject(response.stream as Readable)
+  res.status(response.status.httpStatus).json(jobs)
+}
 
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeEnvironments`, async (req, res) => {
   try {
     HTTP_LOGGER.logMessage(
-      `GET computeEnvironments request received with query: ${JSON.stringify(req.query)}`,
+      `GET computeEnvironments request received with query: ${JSON.stringify(redactCommandForLogging(req.query))}`,
       true
     )
     const getEnvironmentsTask = {
@@ -61,7 +82,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeEnvironments`, async (req, r
 computeRoutes.post(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
   try {
     HTTP_LOGGER.logMessage(
-      `ComputeStartCommand request received as body params: ${JSON.stringify(req.body)}`,
+      `ComputeStartCommand request received as body params: ${JSON.stringify(redactCommandForLogging(req.body))}`,
       true
     )
 
@@ -111,7 +132,7 @@ computeRoutes.post(`${SERVICES_API_BASE_PATH}/freeCompute`, async (req, res) => 
   try {
     HTTP_LOGGER.logMessage(
       `FreeComputeStartCommand request received as body params: ${JSON.stringify(
-        req.body
+        redactCommandForLogging(req.body)
       )}`,
       true
     )
@@ -189,7 +210,7 @@ computeRoutes.put(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
   try {
     HTTP_LOGGER.logMessage(
-      `ComputeGetStatusCommand request received with query: ${JSON.stringify(req.query)}`,
+      `ComputeGetStatusCommand request received with query: ${JSON.stringify(redactCommandForLogging(req.query))}`,
       true
     )
     const statusComputeTask: ComputeGetStatusCommand = {
@@ -198,13 +219,15 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
       consumerAddress: (req.query.consumerAddress as string) || null,
       jobId: (req.query.jobId as string) || null,
       agreementId: (req.query.agreementId as string) || null,
+      signature: (req.query.signature as string) || null,
+      nonce: (req.query.nonce as string) || null,
+      authorization: req.headers?.authorization,
       caller: req.caller
     }
     const response = await new ComputeGetStatusHandler(req.oceanNode).handle(
       statusComputeTask
     )
-    const jobs = await streamToObject(response.stream as Readable)
-    res.status(200).json(jobs)
+    await sendComputeStatusResponse(res, response)
   } catch (error) {
     HTTP_LOGGER.log(LOG_LEVELS_STR.LEVEL_ERROR, `Error: ${error}`)
     res.status(500).send('Internal Server Error')
@@ -215,7 +238,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/compute`, async (req, res) => {
 computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeResult`, async (req, res) => {
   try {
     HTTP_LOGGER.logMessage(
-      `ComputeGetResultCommand request received with query: ${JSON.stringify(req.query)}`,
+      `ComputeGetResultCommand request received with query: ${JSON.stringify(redactCommandForLogging(req.query))}`,
       true
     )
     const resultComputeTask: ComputeGetResultCommand = {
@@ -251,7 +274,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeStreamableLogs`, async (req,
   try {
     HTTP_LOGGER.logMessage(
       `ComputeGetStreamableLogsCommand request received with query: ${JSON.stringify(
-        req.query
+        redactCommandForLogging(req.query)
       )}`,
       true
     )
@@ -289,7 +312,7 @@ computeRoutes.get(`${SERVICES_API_BASE_PATH}/computeStreamableLogs`, async (req,
 computeRoutes.post(`${SERVICES_API_BASE_PATH}/initializeCompute`, async (req, res) => {
   try {
     HTTP_LOGGER.logMessage(
-      `POST initializeCompute request received with query: ${JSON.stringify(req.body)}`,
+      `POST initializeCompute request received with query: ${JSON.stringify(redactCommandForLogging(req.body))}`,
       true
     )
     const { body } = req

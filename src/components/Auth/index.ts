@@ -4,6 +4,7 @@ import { checkNonce, NonceResponse } from '../core/utils/nonceHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { CommonValidation } from '../../utils/validators.js'
 import { OceanNodeConfig } from '../../@types/OceanNode.js'
+import { getAddress } from 'ethers'
 export interface AuthValidation {
   token?: string
   address?: string
@@ -99,14 +100,24 @@ export class Auth {
         }
 
         if (nonceCheckResult.valid) {
-          return { valid: true, error: '' }
+          return { valid: true, error: '', authenticatedAddress: getAddress(address) }
         }
       }
 
       if (token) {
         const authToken = await this.validateToken(token)
         if (authToken) {
-          return { valid: true, error: '' }
+          if (address && authToken.address.toLowerCase() !== address.toLowerCase()) {
+            return {
+              valid: false,
+              error: 'Token address does not match the requested address'
+            }
+          }
+          return {
+            valid: true,
+            error: '',
+            authenticatedAddress: getAddress(authToken.address)
+          }
         }
 
         return { valid: false, error: 'Invalid token' }

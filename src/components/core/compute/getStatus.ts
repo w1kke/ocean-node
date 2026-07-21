@@ -33,6 +33,24 @@ export class ComputeGetStatusHandler extends CommandHandler {
     if (this.shouldDenyTaskHandling(validationResponse)) {
       return validationResponse
     }
+    const authValidationResponse = await this.validateTokenOrSignature(
+      task.authorization,
+      task.consumerAddress,
+      task.nonce,
+      task.signature,
+      task.command
+    )
+    if (authValidationResponse.status.httpStatus !== 200) {
+      return authValidationResponse
+    }
+
+    const consumerAddress = authValidationResponse.authenticatedAddress
+    if (!consumerAddress) {
+      return {
+        stream: null,
+        status: { httpStatus: 401, error: 'Authenticated address is missing' }
+      }
+    }
     try {
       const response: ComputeJob[] = []
       // two scenarios here:
@@ -61,7 +79,7 @@ export class ComputeGetStatusHandler extends CommandHandler {
       for (const engine of engines) {
         CORE_LOGGER.logMessage(`ComputeGetStatusCommand: Querying engine`)
         const jobs = await engine.getComputeJobStatus(
-          task.consumerAddress,
+          consumerAddress,
           task.agreementId,
           jobId
         )

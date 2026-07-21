@@ -11,6 +11,7 @@ import { DEFAULT_MAX_CONNECTIONS_PER_MINUTE } from './index.js'
 export interface CommonValidation {
   valid: boolean
   error?: string
+  authenticatedAddress?: string
 }
 
 // hold data about last request made

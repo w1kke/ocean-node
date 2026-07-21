@@ -4,7 +4,7 @@ import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
 
-import { validateCommandParameters } from './validateCommands.js'
+import { redactCommandForLogging, validateCommandParameters } from './validateCommands.js'
 import { Readable } from 'stream'
 
 function mapChunkToBuffer(chunk: any): Buffer | Uint8Array {
@@ -73,7 +73,10 @@ directCommandRoute.post(
         closedResponse = true
       })
 
-      HTTP_LOGGER.logMessage('Sending command : ' + JSON.stringify(req.body), true)
+      HTTP_LOGGER.logMessage(
+        'Sending command : ' + JSON.stringify(redactCommandForLogging(req.body)),
+        true
+      )
 
       const isLocalCommand =
         !req.oceanNode.hasP2PInterface() ||

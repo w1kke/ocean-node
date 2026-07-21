@@ -12,6 +12,7 @@ import {
   C2DDockerConfigSchema,
   C2DEnvironmentConfigSchema
 } from '../../utils/config/schemas.js'
+import { createComputeEnvironmentId } from '../../components/c2d/compute_engine_docker.js'
 
 let config: OceanNodeConfig
 describe('Should validate configuration from JSON', () => {
@@ -88,6 +89,18 @@ describe('Should require an explicit consumer result policy', () => {
         consumerResultPolicy: { mode: 'singleJson', maxBytes: 262144 }
       }).success
     ).to.equal(true)
+  })
+
+  it('changes the environment identity when only the result policy changes', () => {
+    const archive = createComputeEnvironmentId('cluster', null, { mode: 'archive' }, '0')
+    const strict = createComputeEnvironmentId(
+      'cluster',
+      null,
+      { mode: 'singleJson', maxBytes: 262144 },
+      '0'
+    )
+
+    expect(strict).not.to.equal(archive)
   })
 
   it('rejects unbounded and oversized single JSON policies', () => {

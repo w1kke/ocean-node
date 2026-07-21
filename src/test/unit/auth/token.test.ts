@@ -30,6 +30,27 @@ describe('Auth Token Tests', () => {
     expect(result.valid).to.be.equal(true)
   })
 
+  it('should bind a token to its stored address', async () => {
+    const jwtToken = await auth.getJWTToken(wallet.address, getRandomNonce(), Date.now())
+    await auth.insertToken(wallet.address, jwtToken, Date.now() + 1000, Date.now())
+
+    const matching = await auth.validateAuthenticationOrToken({
+      token: jwtToken,
+      address: wallet.address.toLowerCase()
+    })
+    const mismatched = await auth.validateAuthenticationOrToken({
+      token: jwtToken,
+      address: Wallet.createRandom().address
+    })
+
+    expect(matching.valid).to.equal(true)
+    expect(matching.authenticatedAddress).to.equal(wallet.address)
+    expect(mismatched).to.deep.equal({
+      valid: false,
+      error: 'Token address does not match the requested address'
+    })
+  })
+
   it('should fail validation with invalid token', async () => {
     const result = await auth.validateAuthenticationOrToken({ token: 'invalid-token' })
     expect(result.valid).to.be.equal(false)

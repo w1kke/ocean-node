@@ -283,7 +283,7 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
       params.push(agreementId)
     }
     if (owner) {
-      selectSQL += ` AND owner = ?`
+      selectSQL += ` AND LOWER(owner) = LOWER(?)`
       params.push(owner)
     }
 

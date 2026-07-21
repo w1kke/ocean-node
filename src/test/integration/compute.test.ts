@@ -7,7 +7,8 @@ import {
   ComputeInitializeHandler,
   FreeComputeStartHandler,
   PaidComputeStartHandler,
-  ComputeGetResultHandler
+  ComputeGetResultHandler,
+  getComputeResultAuthCommand
 } from '../../components/core/compute/index.js'
 import type {
   PaidComputeStartCommand,
@@ -171,6 +172,24 @@ describe('**********         Compute', () => {
   let artifactsAddresses: any
   let testAddressFile: string
   let initializeResponse: ProviderComputeInitializeResults
+
+  const signedStatusTask = async (
+    filters: Pick<ComputeGetStatusCommand, 'jobId' | 'agreementId'> = {}
+  ): Promise<ComputeGetStatusCommand> => {
+    const consumerAddress = await consumerAccount.getAddress()
+    const nonce = Date.now().toString()
+    const signature = await safeSign(
+      consumerAccount,
+      createHashForSignature(consumerAddress, nonce, PROTOCOL_COMMANDS.COMPUTE_GET_STATUS)
+    )
+    return {
+      command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
+      consumerAddress,
+      signature,
+      nonce,
+      ...filters
+    }
+  }
 
   before(async () => {
     const defaultTestAddressFile = `${homedir}/.ocean/ocean-contracts/artifacts/address.json`
@@ -1165,12 +1184,7 @@ describe('**********         Compute', () => {
   })
 
   it('should get job status by jobId', async () => {
-    const statusComputeTask: ComputeGetStatusCommand = {
-      command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
-      consumerAddress: null,
-      agreementId: null,
-      jobId
-    }
+    const statusComputeTask = await signedStatusTask({ jobId })
     const response = await new ComputeGetStatusHandler(oceanNode).handle(
       statusComputeTask
     )
@@ -1184,12 +1198,7 @@ describe('**********         Compute', () => {
   })
 
   it('should get job status by consumer', async () => {
-    const statusComputeTask: ComputeGetStatusCommand = {
-      command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
-      consumerAddress: consumerAccount.address,
-      agreementId: null,
-      jobId: null
-    }
+    const statusComputeTask = await signedStatusTask()
     const response = await new ComputeGetStatusHandler(oceanNode).handle(
       statusComputeTask
     )
@@ -1205,7 +1214,7 @@ describe('**********         Compute', () => {
     const messageHashBytes = createHashForSignature(
       await consumerAccount.getAddress(),
       nonce,
-      PROTOCOL_COMMANDS.COMPUTE_GET_RESULT
+      getComputeResultAuthCommand(jobId, 0)
     )
     const signature = await safeSign(consumerAccount, messageHashBytes)
     const resultComputeTask: ComputeGetResultCommand = {
@@ -1227,7 +1236,7 @@ describe('**********         Compute', () => {
     const messageHashBytes = createHashForSignature(
       await additionalViewerAccount.getAddress(),
       nonce,
-      PROTOCOL_COMMANDS.COMPUTE_GET_RESULT
+      getComputeResultAuthCommand(jobId, 0)
     )
     const signature = await safeSign(additionalViewerAccount, messageHashBytes)
     const resultComputeTask: ComputeGetResultCommand = {
@@ -1249,7 +1258,7 @@ describe('**********         Compute', () => {
     const messageHashBytes = createHashForSignature(
       await nonAllowedAccount.getAddress(),
       nonce,
-      PROTOCOL_COMMANDS.COMPUTE_GET_RESULT
+      getComputeResultAuthCommand(jobId, 0)
     )
     const signature = await safeSign(nonAllowedAccount, messageHashBytes)
     const resultComputeTask: ComputeGetResultCommand = {
@@ -1265,7 +1274,7 @@ describe('**********         Compute', () => {
     )
     console.log(response)
     assert(response, 'Failed to get response')
-    assert(response.status.httpStatus === 500, 'Failed to get 500 response')
+    assert(response.status.httpStatus === 403, 'Failed to get 403 response')
     console.log(response.status.error)
   })
 
@@ -1291,12 +1300,7 @@ describe('**********         Compute', () => {
     expect(response.stream).to.be.instanceOf(Readable)
     let tries = 0
     do {
-      const statusComputeTask: ComputeGetStatusCommand = {
-        command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
-        consumerAddress: null,
-        agreementId: null,
-        jobId
-      }
+      const statusComputeTask = await signedStatusTask({ jobId })
       const response = await new ComputeGetStatusHandler(oceanNode).handle(
         statusComputeTask
       )
@@ -1342,12 +1346,7 @@ describe('**********         Compute', () => {
   })
   // let's check our queued job
   it('should get job status by jobId', async () => {
-    const statusComputeTask: ComputeGetStatusCommand = {
-      command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
-      consumerAddress: null,
-      agreementId: null,
-      jobId: freeJobId
-    }
+    const statusComputeTask = await signedStatusTask({ jobId: freeJobId })
     const response = await new ComputeGetStatusHandler(oceanNode).handle(
       statusComputeTask
     )
@@ -2216,16 +2215,12 @@ describe('**********         Compute', () => {
   it('should wait for jobWithOutputURL status 70 and download output from URL', async function () {
     this.timeout(180_000) // waitForAllJobsToFinish can take up to 180s
     assert(jobWithOutputURL, 'jobWithOutputURL must be set by previous test')
-    const statusTask: ComputeGetStatusCommand = {
-      command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
-      consumerAddress: null,
-      agreementId: null,
-      jobId: jobWithOutputURL
-    }
     const deadline = Date.now() + DEFAULT_TEST_TIMEOUT
     let status: number | null = null
     while (Date.now() < deadline) {
-      const response = await new ComputeGetStatusHandler(oceanNode).handle(statusTask)
+      const response = await new ComputeGetStatusHandler(oceanNode).handle(
+        await signedStatusTask({ jobId: jobWithOutputURL })
+      )
       assert(response?.status?.httpStatus === 200, 'Failed to get status')
       const { stream } = response
       const jobs = await streamToObject(stream as Readable)
@@ -2277,12 +2272,9 @@ describe('**********         Compute', () => {
     ) => {
       const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
-        const r = await new ComputeGetStatusHandler(node).handle({
-          command: PROTOCOL_COMMANDS.COMPUTE_GET_STATUS,
-          consumerAddress: null,
-          agreementId: null,
-          jobId: fullJobId
-        })
+        const r = await new ComputeGetStatusHandler(node).handle(
+          await signedStatusTask({ jobId: fullJobId })
+        )
         assert.equal(r.status.httpStatus, 200)
         const jobs = await streamToObject(r.stream as Readable)
         const j = jobs[0]
@@ -3400,14 +3392,12 @@ describe('**********         Compute Access Restrictions', () => {
       )
     })
 
-    it('should handle expired locks by canceling them', async function () {
+    it('should finish a paid job when no matching lock exists', async function () {
       this.timeout(DEFAULT_TEST_TIMEOUT * 3)
 
       const testJobId = `test-job-expired-${Date.now()}`
       const now = Math.floor(Date.now() / 1000)
 
-      // Create lock with expired timestamp (we'll need to mock this or use a different approach)
-      // For this test, we'll create a job and verify it handles expiration correctly
       const testJob: DBComputeJob = {
         owner: await consumerAccount.getAddress(),
         jobId: testJobId,
@@ -3426,7 +3416,7 @@ describe('**********         Compute Access Restrictions', () => {
         payment: {
           chainId: DEVELOPMENT_CHAIN_ID,
           token: paymentToken,
-          lockTx: '0xexpired',
+          lockTx: '0xunmatched',
           claimTx: '',
           cancelTx: '',
           cost: 0
@@ -3453,19 +3443,19 @@ describe('**********         Compute Access Restrictions', () => {
 
       await dbconn.c2d.newJob(testJob)
 
-      // Trigger claimPayments - if lock is expired, it should cancel it
       const claimPaymentsMethod = (dockerEngine as any).claimPayments.bind(dockerEngine)
       await claimPaymentsMethod()
 
       // Wait for processing
       await sleep(3000)
 
-      // Verify job was handled (either finished or still settling)
       const updatedJob = await dbconn.c2d.getJob(testJobId)
       assert(
         updatedJob[0].status === C2DStatusNumber.JobFinished,
         'Job should be processed'
       )
+      assert(updatedJob[0].payment?.claimTx === 'nolock')
+      assert(updatedJob[0].payment?.cancelTx === 'nolock')
     })
 
     it('should skip payment logic for free jobs', async function () {

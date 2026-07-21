@@ -13,6 +13,7 @@ import {
 } from '../../utils/validators.js'
 import { lpStream } from '@libp2p/utils'
 import type { Connection, Stream } from '@libp2p/interface'
+import { redactCommandForLogging } from '../httpRoutes/validateCommands.js'
 
 export class ReadableString extends Readable {
   private sent = false
@@ -146,14 +147,7 @@ export async function handleProtocolCommands(stream: Stream, connection: Connect
     )
   }
 
-  const logPayload = { ...taskRecord }
-  // Avoid JSON-stringifying the request stream itself.
-  if (logPayload.stream) {
-    logPayload.stream = '[request stream]'
-  }
-  if (Buffer.isBuffer(logPayload.rawData)) {
-    logPayload.rawData = `[${logPayload.rawData.length} bytes]`
-  }
+  const logPayload = redactCommandForLogging(taskRecord)
   P2P_LOGGER.logMessage('Performing P2P task: ' + JSON.stringify(logPayload), true)
 
   // Get and execute handler

@@ -93,7 +93,8 @@ export abstract class AdminCommandHandler
         }
       }
 
-      const errorMsg = `The address which signed the message is not on the allowed admins list. Therefore signature ${signature} is rejected`
+      const errorMsg =
+        'The address which signed the message is not on the allowed admins list. The signature is rejected'
       CORE_LOGGER.logMessage(errorMsg)
       return { valid: false, error: errorMsg }
     } catch (e) {

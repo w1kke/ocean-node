@@ -1515,7 +1515,9 @@ starts a free compute job and returns jobId if succesfull
 
 #### Description
 
-returns job status
+Returns job status only for the authenticated consumer. A bearer token is bound to
+its stored wallet address; signature authentication requires the same
+`consumerAddress` used to filter the job.
 
 #### Parameters
 
@@ -1523,9 +1525,15 @@ Required at least one of the following parameters:
 
 | name            | type   | required | description                          |
 | --------------- | ------ | -------- | ------------------------------------ |
-| consumerAddress | string |          | consumer address to use as filter    |
+| consumerAddress | string |          | consumer address; required with signature authentication |
 | jobId           | string |          | jobId address to use as filter       |
 | agreementId     | string |          | agreementId address to use as filter |
+| signature       | string |          | signature for `getComputeStatus`; required without an auth token |
+| nonce           | string |          | nonce used by the signature; required without an auth token |
+
+Alternatively, send the consumer's token in the `Authorization` header. Supplying
+a different `consumerAddress` with that token is rejected. Authentication material
+is redacted from command logs.
 
 #### Response
 
@@ -1577,11 +1585,16 @@ returns job result
 
 | name            | type   | required | description                                                    |
 | --------------- | ------ | -------- | -------------------------------------------------------------- |
-| consumerAddress | string | v        | consumer address to use as filter                              |
+| consumerAddress | string | v        | consumer address; must match the signature or bearer token     |
 | jobId           | string | v        | jobId address to use as filter                                 |
-| signature       | string | v        | signature (consumerAddress + jobId + index.toString() + nonce) |
+| signature       | string | v        | signature of `consumerAddress + nonce + getComputeResult:<jobId>:<index>` |
 | nonce           | string | v        | nonce for the request                                          |
-| index           | number | v        | index of result (0 for main result, 1 for logs)                |
+| index           | number | v        | result index; current release policies expose only index `0`   |
+
+An `Authorization` token may replace the signature and nonce. The token remains
+bound to its stored consumer address. A signature is bound to the full job ID and
+result index using the canonical command string shown above. Compute logs are
+operator-only and are not available through result indices.
 
 #### Response
 

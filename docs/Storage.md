@@ -209,7 +209,7 @@ FTPStorage supports `upload(filename, stream)`. If the file object’s `url` end
 
 ## C2D result upload to remote storage
 
-Compute-to-Data jobs can upload their output archive to a remote backend instead of keeping it only on local node disk.
+Compute-to-Data jobs can upload their policy-approved result to a remote backend instead of keeping it only on local node disk.
 
 ### How it works
 
@@ -217,9 +217,10 @@ Compute-to-Data jobs can upload their output archive to a remote backend instead
    - `remoteStorage`: one of the storage objects from this document (`url`, `s3`, `ftp`, etc.)
    - optional `encryption`: currently only `AES` is accepted, with a hex key
 2. You ECIES-encrypt that JSON into a string and send it in the compute command as `output`.
-3. When the job finishes:
-   - if `output` is present and remote storage supports upload, Ocean Node uploads the tar archive remotely
-   - otherwise, Ocean Node falls back to local `outputs.tar` behavior
+3. When the job finishes, Ocean Node applies the compute environment's required `consumerResultPolicy` before publication:
+   - `archive` uploads or stores `outputs.tar` for intentional legacy workloads;
+   - `singleJson` validates and uploads or stores only bounded `result.json`;
+   - policy validation failure never falls back to the broader archive mode.
 
 ### `ComputeOutput` shape
 
@@ -306,10 +307,12 @@ Example for `freeStartCompute`:
 }
 ```
 
-### Uploaded filename and fallback behavior
+### Uploaded filename and local behavior
 
-- For remote upload, Ocean Node writes: `outputs-<clusterHash>-<jobId>.tar`
-- If `output` is missing/empty, or chosen storage does not support upload, Ocean Node stores output locally (`outputs.tar`) as before.
+- Archive-mode remote upload writes `outputs-<clusterHash>-<jobId>.tar`.
+- Strict JSON remote upload writes `result-<clusterHash>-<jobId>.json` (or `.json.enc` when configured encryption is applied).
+- If `output` is missing/empty, Ocean Node stores the artifact selected by the environment policy locally.
+- Remote publication starts only after strict validation completes. Atomic replacement semantics depend on the selected remote storage backend.
 - If remote upload fails, job status is set to `ResultsUploadFailed`.
 
 ---

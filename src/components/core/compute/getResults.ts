@@ -9,6 +9,10 @@ import {
 } from '../../httpRoutes/validateCommands.js'
 import { isAddress } from 'ethers'
 
+export function getComputeResultAuthCommand(jobId: string, index: number): string {
+  return `getComputeResult:${jobId}:${index}`
+}
+
 export class ComputeGetResultHandler extends CommandHandler {
   validate(command: ComputeGetResultCommand): ValidateParams {
     const validation = validateCommandParameters(command, ['jobId', 'index'])
@@ -36,10 +40,18 @@ export class ComputeGetResultHandler extends CommandHandler {
       task.consumerAddress,
       task.nonce,
       task.signature,
-      task.command
+      getComputeResultAuthCommand(task.jobId, task.index)
     )
     if (authValidationResponse.status.httpStatus !== 200) {
       return authValidationResponse
+    }
+
+    const consumerAddress = authValidationResponse.authenticatedAddress
+    if (!consumerAddress) {
+      return {
+        stream: null,
+        status: { httpStatus: 401, error: 'Authenticated address is missing' }
+      }
     }
 
     // split jobId (which is already in hash-jobId format) and get the hash
@@ -63,7 +75,7 @@ export class ComputeGetResultHandler extends CommandHandler {
     }
     try {
       const respStream = await engine.getComputeJobResult(
-        task.consumerAddress,
+        consumerAddress,
         jobId,
         task.index,
         task.offset ?? 0

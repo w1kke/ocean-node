@@ -74,6 +74,19 @@ const C2D_CONTAINER_GID = 1000
 const trivyImage = 'aquasec/trivy:0.69.3' // Use pinned versions for safety
 const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 
+export function createComputeEnvironmentId(
+  clusterHash: string,
+  fees: ComputeEnvFeesStructure,
+  resultPolicy: ConsumerResultPolicy,
+  suffix: string
+): string {
+  return (
+    clusterHash +
+    '-' +
+    create256Hash(JSON.stringify(fees) + JSON.stringify(resultPolicy) + suffix)
+  )
+}
+
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
 
@@ -82,8 +95,11 @@ export class C2DEngineDocker extends C2DEngine {
   private cronTime: number = 2000
   private jobImageSizes: Map<string, number> = new Map()
   private isInternalLoopRunning: boolean = false
+  private imageCleanupInitialTimer: NodeJS.Timeout | null = null
   private imageCleanupTimer: NodeJS.Timeout | null = null
+  private paymentClaimInitialTimer: NodeJS.Timeout | null = null
   private paymentClaimTimer: NodeJS.Timeout | null = null
+  private scanDBUpdateInitialTimer: NodeJS.Timeout | null = null
   private scanDBUpdateTimer: NodeJS.Timeout | null = null
   private static DEFAULT_DOCKER_REGISTRY = 'https://registry-1.docker.io'
   private retentionDays: number
@@ -407,14 +423,12 @@ export class C2DEngineDocker extends C2DEngine {
       }
 
       const envIdSuffix = envDef.id || String(envIdx)
-      env.id =
-        this.getC2DConfig().hash +
-        '-' +
-        create256Hash(
-          JSON.stringify(env.fees) +
-            JSON.stringify(env.consumerResultPolicy) +
-            envIdSuffix
-        )
+      env.id = createComputeEnvironmentId(
+        this.getC2DConfig().hash,
+        env.fees,
+        env.consumerResultPolicy,
+        envIdSuffix
+      )
 
       this.envs.push(env)
       CORE_LOGGER.info(
@@ -473,11 +487,12 @@ export class C2DEngineDocker extends C2DEngine {
 
     // Start image cleanup timer
     if (this.cleanupInterval) {
-      if (this.imageCleanupTimer) {
+      if (this.imageCleanupInitialTimer || this.imageCleanupTimer) {
         return // Already running
       }
       // Run initial cleanup after a short delay
-      setTimeout(() => {
+      this.imageCleanupInitialTimer = setTimeout(() => {
+        this.imageCleanupInitialTimer = null
         this.cleanupOldImages().catch((e) => {
           CORE_LOGGER.error(`Initial image cleanup failed: ${e.message}`)
         })
@@ -496,12 +511,13 @@ export class C2DEngineDocker extends C2DEngine {
     }
     // start payments cron
     if (this.paymentClaimInterval) {
-      if (this.paymentClaimTimer) {
+      if (this.paymentClaimInitialTimer || this.paymentClaimTimer) {
         return // Already running
       }
 
       // Run initial cleanup after a short delay
-      setTimeout(() => {
+      this.paymentClaimInitialTimer = setTimeout(() => {
+        this.paymentClaimInitialTimer = null
         this.claimPayments().catch((e) => {
           CORE_LOGGER.error(`Initial payments claim failed: ${e.message}`)
         })
@@ -519,13 +535,14 @@ export class C2DEngineDocker extends C2DEngine {
       )
     }
     // scan db updater cron
-    if (this.scanImageDBUpdateInterval) {
-      if (this.scanDBUpdateTimer) {
+    if (this.scanImages && this.scanImageDBUpdateInterval) {
+      if (this.scanDBUpdateInitialTimer || this.scanDBUpdateTimer) {
         return // Already running
       }
 
       // Run initial db cache
-      setTimeout(() => {
+      this.scanDBUpdateInitialTimer = setTimeout(() => {
+        this.scanDBUpdateInitialTimer = null
         this.scanDBUpdate().catch((e) => {
           CORE_LOGGER.error(`scan DB Update Initial failed: ${e.message}`)
         })
@@ -552,15 +569,35 @@ export class C2DEngineDocker extends C2DEngine {
     }
     this.isInternalLoopRunning = false
     // Stop image cleanup timer
+    if (this.imageCleanupInitialTimer) {
+      clearTimeout(this.imageCleanupInitialTimer)
+      this.imageCleanupInitialTimer = null
+      CORE_LOGGER.debug('Initial image cleanup timer stopped')
+    }
     if (this.imageCleanupTimer) {
       clearInterval(this.imageCleanupTimer)
       this.imageCleanupTimer = null
       CORE_LOGGER.debug('Image cleanup timer stopped')
     }
+    if (this.paymentClaimInitialTimer) {
+      clearTimeout(this.paymentClaimInitialTimer)
+      this.paymentClaimInitialTimer = null
+      CORE_LOGGER.debug('Initial payment claim timer stopped')
+    }
     if (this.paymentClaimTimer) {
       clearInterval(this.paymentClaimTimer)
       this.paymentClaimTimer = null
       CORE_LOGGER.debug('Payment claim timer stopped')
+    }
+    if (this.scanDBUpdateInitialTimer) {
+      clearTimeout(this.scanDBUpdateInitialTimer)
+      this.scanDBUpdateInitialTimer = null
+      CORE_LOGGER.debug('Initial scan database update timer stopped')
+    }
+    if (this.scanDBUpdateTimer) {
+      clearInterval(this.scanDBUpdateTimer)
+      this.scanDBUpdateTimer = null
+      CORE_LOGGER.debug('Scan database update timer stopped')
     }
     return Promise.resolve()
   }
@@ -661,6 +698,17 @@ export class C2DEngineDocker extends C2DEngine {
         if (currentTimestamp > lockExpiry) {
           // Lock expired, cancel it
           jobsToCancel.push(job)
+          continue
+        }
+
+        if (
+          job.status === C2DStatusNumber.VulnerableImage ||
+          job.status === C2DStatusNumber.ImageScanFailed
+        ) {
+          // A denied image never reached billable execution. Claiming zero closes the
+          // Enterprise Escrow lock and releases its full amount back to the payer.
+          const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
+          jobsToClaim.push({ job, cost: 0, proof })
           continue
         }
 
@@ -1456,9 +1504,13 @@ export class C2DEngineDocker extends C2DEngine {
     if (jobs.length === 0 || jobs.length > 1) {
       throw new Error(`Cannot find job with id ${jobId}`)
     }
+    const normalizedConsumer = consumerAddress.toLowerCase()
     if (
-      jobs[0].owner !== consumerAddress &&
-      (!jobs[0].additionalViewers || !jobs[0].additionalViewers.includes(consumerAddress))
+      jobs[0].owner.toLowerCase() !== normalizedConsumer &&
+      (!jobs[0].additionalViewers ||
+        !jobs[0].additionalViewers.some(
+          (viewer) => viewer.toLowerCase() === normalizedConsumer
+        ))
     ) {
       // consumerAddress is not the owner and not in additionalViewers
       throw new Error(

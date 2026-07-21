@@ -280,6 +280,8 @@ export interface ComputeGetStreamableLogsCommand extends Command {
 
 export interface ComputeGetStatusCommand extends Command {
   consumerAddress?: string
+  signature?: string
+  nonce?: string
   jobId?: string
   agreementId?: string
 }

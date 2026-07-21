@@ -8,6 +8,7 @@ import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants
 import { FileInfoHandler } from '../core/handler/fileInfoHandler.js'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
 import { FileInfoCommand } from '../../@types/commands.js'
+import { redactCommandForLogging } from './validateCommands.js'
 
 export const fileInfoRoute = express.Router()
 fileInfoRoute.use(express.json()) // Ensure JSON parsing middleware is used
@@ -18,7 +19,10 @@ fileInfoRoute.post(
   express.urlencoded({ extended: true, type: '*/*' }),
   async (req: Request, res: Response): Promise<void> => {
     const fileInfoReq: FileInfoHttpRequest = req.body as unknown as FileInfoHttpRequest
-    HTTP_LOGGER.logMessage(`FileInfo request received: ${JSON.stringify(req.body)}`, true)
+    HTTP_LOGGER.logMessage(
+      `FileInfo request received: ${JSON.stringify(redactCommandForLogging(req.body))}`,
+      true
+    )
 
     try {
       const hasType =

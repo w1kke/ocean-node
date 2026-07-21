@@ -10,6 +10,49 @@ export type ValidateParams = {
   status?: number
 }
 
+const SENSITIVE_LOG_FIELDS = new Set([
+  'accesskeyid',
+  'apikey',
+  'authorization',
+  'cookie',
+  'encrypteddockerregistryauth',
+  'headers',
+  'jwtsecret',
+  'mnemonic',
+  'password',
+  'privatekey',
+  'rawdata',
+  'secretaccesskey',
+  'signature',
+  'token',
+  'url',
+  'xapikey'
+])
+
+function redactValueForLogging(value: any, seen: WeakSet<object>): any {
+  if (Buffer.isBuffer(value)) return `[${value.length} bytes]`
+  if (!value || typeof value !== 'object') return value
+  if (seen.has(value)) return '[CIRCULAR]'
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactValueForLogging(item, seen))
+  }
+
+  const redacted: Record<string, any> = {}
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (key === 'stream') redacted[key] = '[STREAM]'
+    else if (SENSITIVE_LOG_FIELDS.has(normalized)) redacted[key] = '[REDACTED]'
+    else redacted[key] = redactValueForLogging(item, seen)
+  }
+  return redacted
+}
+
+export function redactCommandForLogging(commandData: any): any {
+  return redactValueForLogging(commandData ?? {}, new WeakSet())
+}
+
 // add others when we add suppor
 
 // request level validation, just check if we have a "command" field and its a supported one
@@ -32,23 +75,7 @@ export function validateCommandParameters(
     return buildInvalidRequestMessage(`Invalid or unrecognized command: "${commandStr}"`)
   }
 
-  // deep copy for logging (must not throw for non-cloneable payloads like streams)
-  let logCommandData: any
-  try {
-    // For some commands, the task contains non-cloneable fields (e.g. Node streams).
-    // We redact those before cloning to avoid DataCloneError.
-    const sanitized = { ...(commandData ?? {}) }
-    if ('stream' in sanitized) {
-      sanitized.stream = '[STREAM]'
-    }
-    logCommandData = structuredClone(sanitized)
-  } catch {
-    // Last resort: shallow clone; avoid crashing validation because of logging.
-    logCommandData = { ...(commandData ?? {}) }
-    if ('stream' in logCommandData) {
-      logCommandData.stream = '[STREAM]'
-    }
-  }
+  const logCommandData = redactCommandForLogging(commandData)
 
   if (commandStr === PROTOCOL_COMMANDS.ENCRYPT) {
     logCommandData.files = [] // hide files data (sensitive) + rawData (long buffer) from logging

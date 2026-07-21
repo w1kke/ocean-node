@@ -5,6 +5,7 @@ import {
 } from '../core/handler/policyServer.js'
 import { HTTP_LOGGER } from '../../utils/logging/common.js'
 import { PROTOCOL_COMMANDS, SERVICES_API_BASE_PATH } from '../../utils/constants.js'
+import { redactCommandForLogging } from './validateCommands.js'
 
 export const PolicyServerPassthroughRoute = express.Router()
 PolicyServerPassthroughRoute.use(express.json()) // Ensure JSON parsing middleware is used
@@ -14,7 +15,7 @@ PolicyServerPassthroughRoute.post(
   express.urlencoded({ extended: true, type: '*/*' }),
   async (req: Request, res: Response): Promise<void> => {
     HTTP_LOGGER.logMessage(
-      `PolicyServerPassthroughRoute request received: ${JSON.stringify(req.body)}`,
+      `PolicyServerPassthroughRoute request received: ${JSON.stringify(redactCommandForLogging(req.body))}`,
       true
     )
     try {
@@ -44,7 +45,7 @@ PolicyServerPassthroughRoute.post(
   express.urlencoded({ extended: true, type: '*/*' }),
   async (req: Request, res: Response): Promise<void> => {
     HTTP_LOGGER.logMessage(
-      `initializePSVerificationRoute  request received: ${JSON.stringify(req.body)}`,
+      `initializePSVerificationRoute  request received: ${JSON.stringify(redactCommandForLogging(req.body))}`,
       true
     )
     try {

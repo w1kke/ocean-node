@@ -96,7 +96,7 @@ export class SQLiteAuthToken implements AuthTokenDatabaseProvider {
 
         if (validUntilDate < now) {
           resolve(null)
-          DATABASE_LOGGER.info(`Auth token ${token} is invalid`)
+          DATABASE_LOGGER.info('Auth token is invalid')
           await this.invalidateTokenEntry(token)
           return
         }

@@ -13,6 +13,7 @@ import { FeesHandler } from '../core/handler/feesHandler.js'
 import { StorageObject, EncryptMethod } from '../../@types/fileObject.js'
 import { P2PCommandResponse } from '../../@types/OceanNode.js'
 import { getEncryptMethodFromString } from '../../utils/crypt.js'
+import { redactCommandForLogging } from './validateCommands.js'
 
 export const providerRoutes = express.Router()
 
@@ -222,7 +223,7 @@ providerRoutes.get(
       return
     }
     HTTP_LOGGER.logMessage(
-      `Download request received: ${JSON.stringify(req.query)}`,
+      `Download request received: ${JSON.stringify(redactCommandForLogging(req.query))}`,
       true
     )
     const authorization = req.headers?.authorization

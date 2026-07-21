@@ -15,6 +15,10 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 import { ReadableString } from '../../P2P/handlers.js'
 import { CONNECTION_HISTORY_DELETE_THRESHOLD } from '../../../utils/constants.js'
 
+export interface AuthenticatedCommandResponse extends P2PCommandResponse {
+  authenticatedAddress?: string
+}
+
 export abstract class BaseHandler implements ICommandHandler {
   public nodeInstance: OceanNode
   public constructor(oceanNode: OceanNode) {
@@ -180,7 +184,9 @@ export abstract class CommandHandler
       throw new Error('Auth not configured')
     }
 
-    return (await auth.validateToken(authToken)).address
+    const token = await auth.validateToken(authToken)
+    if (!token) throw new Error('Invalid token')
+    return token.address
   }
 
   async validateTokenOrSignature(
@@ -189,7 +195,7 @@ export abstract class CommandHandler
     nonce: string,
     signature: string,
     command: string
-  ): Promise<P2PCommandResponse> {
+  ): Promise<AuthenticatedCommandResponse> {
     const oceanNode = this.getOceanNode()
     const auth = oceanNode.getAuth()
     if (!auth) {
@@ -214,7 +220,8 @@ export abstract class CommandHandler
 
     return {
       stream: null,
-      status: { httpStatus: 200 }
+      status: { httpStatus: 200 },
+      authenticatedAddress: isAuthRequestValid.authenticatedAddress
     }
   }
 }

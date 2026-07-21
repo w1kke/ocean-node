@@ -4,9 +4,15 @@ import sinon from 'sinon'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
+import { Readable } from 'stream'
 
 import type { DBComputeJob } from '../../@types/C2D/C2D.js'
+import { Auth } from '../../components/Auth/index.js'
+import { ComputeGetResultHandler } from '../../components/core/compute/getResults.js'
+import { ComputeGetStatusHandler } from '../../components/core/compute/getStatus.js'
 import { ComputeGetStreamableLogsHandler } from '../../components/core/compute/getStreamableLogs.js'
+import { sendComputeStatusResponse } from '../../components/httpRoutes/compute.js'
+import { redactCommandForLogging } from '../../components/httpRoutes/validateCommands.js'
 
 function ensureTestEnv() {
   if (!process.env.PRIVATE_KEY) process.env.PRIVATE_KEY = `0x${'11'.repeat(32)}`
@@ -123,5 +129,176 @@ describe('consumer compute result access', () => {
     expect(response.status.httpStatus).to.equal(403)
     expect(response.status.error).to.equal('Compute logs are operator-only')
     expect(response.stream).to.equal(null)
+  })
+
+  it('binds bearer tokens to result and status addresses', async () => {
+    const owner = '0x0000000000000000000000000000000000000001'
+    const attacker = '0x0000000000000000000000000000000000000002'
+    const tokenDatabase = {
+      validateToken: sinon.stub().resolves({ address: attacker })
+    } as any
+    const auth = new Auth(tokenDatabase, { jwtSecret: 'test-secret' } as any)
+    const engine = {
+      getComputeJobResult: sinon.stub().resolves({
+        stream: Readable.from('result'),
+        headers: {}
+      }),
+      getComputeJobStatus: sinon.stub().resolves([])
+    }
+    const node = {
+      getRequestMap: () => new Map(),
+      getConfig: () => ({ rateLimit: 100 }),
+      getAuth: () => auth,
+      getC2DEngines: () => ({
+        getC2DByHash: sinon.stub().resolves(engine),
+        getAllEngines: sinon.stub().resolves([engine])
+      })
+    } as any
+
+    const resultResponse = await new ComputeGetResultHandler(node).handle({
+      command: 'getComputeResult',
+      authorization: 'attacker-token',
+      consumerAddress: owner,
+      jobId: 'hash-job',
+      index: 0
+    } as any)
+    const statusResponse = await new ComputeGetStatusHandler(node).handle({
+      command: 'getComputeStatus',
+      authorization: 'attacker-token',
+      consumerAddress: owner,
+      jobId: 'hash-job'
+    } as any)
+
+    expect(resultResponse.status).to.include({ httpStatus: 401 })
+    expect(statusResponse.status).to.include({ httpStatus: 401 })
+    expect(engine.getComputeJobResult.notCalled).to.equal(true)
+    expect(engine.getComputeJobStatus.notCalled).to.equal(true)
+  })
+
+  it('preserves status authorization errors at the HTTP boundary', async () => {
+    const response = {
+      stream: null,
+      status: { httpStatus: 401, error: 'Invalid token' }
+    } as any
+    const send = sinon.stub()
+    const json = sinon.stub()
+    const status = sinon.stub().returns({ send, json })
+
+    await sendComputeStatusResponse({ status } as any, response)
+
+    expect(status.calledOnceWith(401)).to.equal(true)
+    expect(send.calledOnceWith('Invalid token')).to.equal(true)
+    expect(json.notCalled).to.equal(true)
+  })
+
+  it('preserves stream-bearing status errors at the HTTP boundary', async () => {
+    const response = {
+      stream: Readable.from('Rate limit exceeded'),
+      status: { httpStatus: 403, error: 'Rate limit exceeded' }
+    } as any
+    const send = sinon.stub()
+    const json = sinon.stub()
+    const status = sinon.stub().returns({ send, json })
+
+    await sendComputeStatusResponse({ status } as any, response)
+
+    expect(status.calledOnceWith(403)).to.equal(true)
+    expect(send.calledOnceWith('Rate limit exceeded')).to.equal(true)
+    expect(json.notCalled).to.equal(true)
+  })
+
+  it('redacts replayable authentication material from command logs', () => {
+    const redacted = redactCommandForLogging({
+      command: 'getComputeStatus',
+      authorization: 'Bearer secret-token',
+      signature: '0xsigned',
+      token: 'secret-token',
+      files: [
+        {
+          headers: { Authorization: 'Bearer nested-token' },
+          s3Access: { accessKeyId: 'public-id', secretAccessKey: 'nested-secret' }
+        }
+      ],
+      consumerAddress: '0x0000000000000000000000000000000000000001'
+    })
+
+    expect(redacted).to.deep.equal({
+      command: 'getComputeStatus',
+      authorization: '[REDACTED]',
+      signature: '[REDACTED]',
+      token: '[REDACTED]',
+      files: [
+        {
+          headers: '[REDACTED]',
+          s3Access: { accessKeyId: '[REDACTED]', secretAccessKey: '[REDACTED]' }
+        }
+      ],
+      consumerAddress: '0x0000000000000000000000000000000000000001'
+    })
+  })
+
+  it('uses the token address when status omits a consumer address', async () => {
+    const owner = '0x0000000000000000000000000000000000000001'
+    const tokenDatabase = {
+      validateToken: sinon.stub().resolves({ address: owner })
+    } as any
+    const auth = new Auth(tokenDatabase, { jwtSecret: 'test-secret' } as any)
+    const engine = {
+      getComputeJobStatus: sinon.stub().resolves([{ jobId: 'job' }])
+    }
+    const node = {
+      getRequestMap: () => new Map(),
+      getConfig: () => ({ rateLimit: 100 }),
+      getAuth: () => auth,
+      getC2DEngines: () => ({
+        getC2DByHash: sinon.stub().resolves(engine)
+      })
+    } as any
+
+    const response = await new ComputeGetStatusHandler(node).handle({
+      command: 'getComputeStatus',
+      authorization: 'owner-token',
+      jobId: 'hash-job'
+    } as any)
+
+    expect(response.status.httpStatus).to.equal(200)
+    expect(engine.getComputeJobStatus.calledOnceWith(owner, undefined, 'job')).to.equal(
+      true
+    )
+    expect(tokenDatabase.validateToken.calledOnce).to.equal(true)
+  })
+
+  it('maps missing and unauthorized results at the handler boundary', async () => {
+    const owner = '0x0000000000000000000000000000000000000001'
+    const auth = {
+      validateAuthenticationOrToken: sinon.stub().resolves({
+        valid: true,
+        error: '',
+        authenticatedAddress: owner
+      })
+    }
+    const engine = { getComputeJobResult: sinon.stub().resolves(null) }
+    const node = {
+      getRequestMap: () => new Map(),
+      getConfig: () => ({ rateLimit: 100 }),
+      getAuth: () => auth,
+      getC2DEngines: () => ({ getC2DByHash: sinon.stub().resolves(engine) })
+    } as any
+    const handler = new ComputeGetResultHandler(node)
+    const task = {
+      command: 'getComputeResult',
+      consumerAddress: owner,
+      signature: 'signature',
+      nonce: '1',
+      jobId: 'hash-job',
+      index: 0
+    } as any
+
+    expect((await handler.handle(task)).status.httpStatus).to.equal(404)
+    expect(auth.validateAuthenticationOrToken.firstCall.args[0].command).to.equal(
+      'getComputeResult:hash-job:0'
+    )
+    engine.getComputeJobResult.rejects(new Error(`${owner} is not authorized`))
+    expect((await handler.handle(task)).status.httpStatus).to.equal(403)
   })
 })

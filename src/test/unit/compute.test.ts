@@ -192,6 +192,12 @@ describe('Compute Jobs Database', () => {
     assert(jobs[0], 'Job should not be null')
     assert(jobs[0].jobId === jobId, 'JobId mismatches')
     assert(jobs[0].maxJobDuration === jobDuration, 'Job duration mismatches')
+    const byLowercaseOwner = await db.getJob(
+      undefined,
+      undefined,
+      jobs[0].owner.toLowerCase()
+    )
+    expect(byLowercaseOwner.map((job) => job.jobId)).to.include(jobId)
   })
   it('should update job', async () => {
     const jobs = await db.getJob(jobId)

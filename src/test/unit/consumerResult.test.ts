@@ -1,8 +1,19 @@
+/* eslint-disable security/detect-non-literal-fs-filename */
 import { expect } from 'chai'
 import { Readable } from 'stream'
 import * as tarStream from 'tar-stream'
+import sinon from 'sinon'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import os from 'os'
+import path from 'path'
 
 import { readSingleJsonResultArchive } from '../../components/c2d/consumerResult.js'
+import {
+  C2DStatusNumber,
+  C2DStatusText,
+  type DBComputeJob
+} from '../../@types/C2D/C2D.js'
+import { Storage } from '../../components/storage/index.js'
 
 type ArchiveEntry = {
   name: string
@@ -46,6 +57,8 @@ async function expectRejected(archive: Buffer, message: string, maxBytes = 1024)
 }
 
 describe('single JSON consumer result', () => {
+  afterEach(() => sinon.restore())
+
   it('returns the original bytes for one bounded JSON object', async () => {
     const body = Buffer.from('{"ok":true,"value":42}')
     const archive = await makeArchive([{ name: 'result.json', body }])
@@ -106,5 +119,111 @@ describe('single JSON consumer result', () => {
     )
     const archive = await makeArchive([{ name: 'result.json', body: '{}' }])
     await expectRejected(archive.subarray(0, 600), 'unexpected end of data')
+  })
+
+  it('publishes only validated bytes to local or remote storage', async () => {
+    if (!process.env.PRIVATE_KEY) process.env.PRIVATE_KEY = `0x${'11'.repeat(32)}`
+    const { C2DEngineDocker } =
+      await import('../../components/c2d/compute_engine_docker.js')
+    const tempFolder = mkdtempSync(path.join(os.tmpdir(), 'ocean-result-publish-')) + '/'
+    const body = Buffer.from('{"approved":true}')
+    const validArchive = await makeArchive([{ name: 'result.json', body }])
+    const invalidArchive = await makeArchive([
+      { name: 'result.json', body },
+      { name: 'private.log', body: 'must not publish' }
+    ])
+    const archives = new Map([
+      ['local-algoritm', validArchive],
+      ['remote-algoritm', validArchive],
+      ['invalid-algoritm', invalidArchive]
+    ])
+    const db = { updateJob: sinon.stub().resolves() } as any
+    const keyManager = {
+      decrypt: sinon
+        .stub()
+        .resolves(Buffer.from(JSON.stringify({ remoteStorage: { type: 'test' } })))
+    } as any
+    const cluster = {
+      type: 2,
+      hash: 'publish-test',
+      tempFolder,
+      connection: {}
+    } as any
+    const engine = new C2DEngineDocker(cluster, db, {} as any, keyManager, {} as any)
+    sinon.stub(engine, 'getComputeEnvironments').resolves([
+      {
+        id: 'strict-env',
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 1024 }
+      } as any
+    ])
+    ;(engine as any).cleanupJob = sinon.stub().resolves()
+    ;(engine as any).docker = {
+      getContainer: (name: string) => ({
+        inspect: sinon.stub().resolves({
+          State: { OOMKilled: false, ExitCode: 0 }
+        }),
+        getArchive: sinon
+          .stub()
+          .callsFake(() => Promise.resolve(Readable.from([archives.get(name)])))
+      })
+    }
+    let uploaded = Buffer.alloc(0)
+    let uploadedName = ''
+    sinon.stub(Storage, 'getStorageClass').returns({
+      hasUpload: true,
+      upload: async (name: string, stream: Readable) => {
+        uploadedName = name
+        const chunks = []
+        for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+        uploaded = Buffer.concat(chunks)
+      }
+    } as any)
+
+    const makePublishingJob = (jobId: string, output: string | null = null) =>
+      ({
+        jobId,
+        environment: 'strict-env',
+        status: C2DStatusNumber.PublishingResults,
+        statusText: C2DStatusText.PublishingResults,
+        terminationDetails: { OOMKilled: null, exitCode: null },
+        isRunning: false,
+        dateFinished: '',
+        output
+      }) as DBComputeJob
+
+    try {
+      for (const jobId of ['local', 'remote', 'invalid']) {
+        mkdirSync(path.join(engine.getStoragePath(), jobId, 'data', 'outputs'), {
+          recursive: true
+        })
+      }
+      const local = makePublishingJob('local')
+      await (engine as any).processJob(local)
+      const localPath = path.join(
+        engine.getStoragePath(),
+        'local',
+        'data',
+        'outputs',
+        'result.json'
+      )
+      expect(readFileSync(localPath).equals(body)).to.equal(true)
+      expect(existsSync(`${localPath}.tmp`)).to.equal(false)
+
+      const remote = makePublishingJob('remote', Buffer.from('encrypted').toString('hex'))
+      await (engine as any).processJob(remote)
+      expect(uploaded.equals(body)).to.equal(true)
+      expect(uploadedName).to.equal('result-publish-test-remote.json')
+
+      const invalid = makePublishingJob('invalid')
+      await (engine as any).processJob(invalid)
+      expect(invalid.status).to.equal(C2DStatusNumber.ResultsFetchFailed)
+      expect(
+        existsSync(
+          path.join(engine.getStoragePath(), 'invalid', 'data', 'outputs', 'result.json')
+        )
+      ).to.equal(false)
+    } finally {
+      rmSync(tempFolder, { recursive: true, force: true })
+    }
   })
 })
