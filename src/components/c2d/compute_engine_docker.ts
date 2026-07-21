@@ -3441,11 +3441,16 @@ export function checkManifestPlatform(
   envPlatform?: RunningPlatform
 ): boolean {
   if (!manifestPlatform || !envPlatform) return true // skips if not present
-  if (envPlatform.architecture === 'amd64') envPlatform.architecture = 'x86_64' // x86_64 is compatible with amd64
-  if (manifestPlatform.architecture === 'amd64') manifestPlatform.architecture = 'x86_64' // x86_64 is compatible with amd64
+
+  const normalizeArchitecture = (architecture: string): string => {
+    if (architecture === 'amd64' || architecture === 'x86_64') return 'amd64'
+    if (architecture === 'arm64' || architecture === 'aarch64') return 'arm64'
+    return architecture
+  }
 
   if (
-    envPlatform.architecture !== manifestPlatform.architecture ||
+    normalizeArchitecture(envPlatform.architecture) !==
+      normalizeArchitecture(manifestPlatform.architecture) ||
     envPlatform.os !== manifestPlatform.os
   )
     return false

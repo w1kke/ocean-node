@@ -327,6 +327,15 @@ describe('Compute Jobs Database', () => {
     expect(checkManifestPlatform(null, env)).to.be.equal(true)
   })
 
+  it('should treat OCI and Linux ARM64 architecture names as equivalent', () => {
+    const manifest = { architecture: 'arm64', os: 'linux' }
+    const environment: RunningPlatform = { architecture: 'aarch64', os: 'linux' }
+
+    expect(checkManifestPlatform(manifest, environment)).to.be.equal(true)
+    expect(manifest.architecture).to.equal('arm64')
+    expect(environment.architecture).to.equal('aarch64')
+  })
+
   describe('testing checkAndFillMissingResources', function () {
     let engine: TestC2DEngine
 
