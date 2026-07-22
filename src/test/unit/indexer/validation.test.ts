@@ -17,7 +17,7 @@ import { RPCS } from '../../../@types/blockchain.js'
 import { Database } from '../../../components/database/index.js'
 import { OceanNodeConfig } from '../../../@types/OceanNode.js'
 // import sinon, { SinonSandbox } from 'sinon'
-import { Wallet } from 'ethers'
+import { getBytes, Signature, verifyMessage, Wallet } from 'ethers'
 import { Readable } from 'stream'
 import { createHashForSignature, safeSign } from '../../utils/signature.js'
 
@@ -115,13 +115,19 @@ describe('Schema validation tests', () => {
     const signatureResult = await oceanNode.getValidationSignature(
       JSON.stringify(ddoValidationSignature)
     )
-    expect(signatureResult).to.eql({
-      hash: '0xa291d25eb3dd0c8487dc2d55baa629184e7b668ed1c579198a434eca9c663ac4',
-      publicKey: '0xe2DD09d719Da89e5a3D0F2549c7E24566e947260',
-      r: '0xc61361803ca3402afa2406dfc3e2729dd8f0c21d06c1456cc1668510b23951c0',
-      s: '0x008b965fa2df393765d32942a7d8114d529a602cd7aa672d23d21f90dbeae2fd',
-      v: 28
-    })
+    expect(signatureResult.hash).to.equal(
+      '0xa291d25eb3dd0c8487dc2d55baa629184e7b668ed1c579198a434eca9c663ac4'
+    )
+    expect(signatureResult.publicKey).to.equal('0xe2DD09d719Da89e5a3D0F2549c7E24566e947260')
+
+    const signature = Signature.from({
+      r: signatureResult.r,
+      s: signatureResult.s,
+      v: signatureResult.v
+    }).serialized
+    expect(verifyMessage(getBytes(signatureResult.hash), signature)).to.equal(
+      signatureResult.publicKey
+    )
   })
 
   it('should pass the validation on version 4.7.0', async () => {

@@ -364,13 +364,7 @@ export class OceanNode {
     try {
       const hashedDDO = create256Hash(ddo)
       const providerWallet = await this.keyManager.getEthWallet()
-      const messageHash = ethers.solidityPackedKeccak256(
-        ['bytes'],
-        [ethers.hexlify(ethers.toUtf8Bytes(hashedDDO))]
-      )
-      const signed32Bytes = await providerWallet.signMessage(
-        new Uint8Array(ethers.toBeArray(messageHash))
-      )
+      const signed32Bytes = await providerWallet.signMessage(ethers.getBytes(hashedDDO))
       const signatureSplitted = ethers.Signature.from(signed32Bytes)
       const v = signatureSplitted.v <= 1 ? signatureSplitted.v + 27 : signatureSplitted.v
       const r = ethers.hexlify(signatureSplitted.r) // 32 bytes
