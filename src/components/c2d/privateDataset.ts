@@ -1,7 +1,15 @@
 /* eslint-disable security/detect-non-literal-fs-filename */
 import axios from 'axios'
 import { createHash, timingSafeEqual } from 'crypto'
-import { createWriteStream, existsSync, renameSync, rmSync } from 'fs'
+import {
+  createWriteStream,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  renameSync,
+  rmSync
+} from 'fs'
+import { Agent as HttpsAgent } from 'https'
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { PrivateDatasetPolicy } from '../../@types/C2D/C2D.js'
@@ -49,6 +57,49 @@ export function assertPrivateDatasetConfiguration(
   ) {
     throw new PrivateDatasetError('private_dataset_credential_invalid')
   }
+  if (!policy.tls) return
+
+  const url = new URL(policy.url)
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname.toLowerCase() !== policy.tls.serverName.toLowerCase()
+  ) {
+    throw new PrivateDatasetError('private_dataset_tls_identity_invalid')
+  }
+  for (const [file, privateFile] of [
+    [policy.tls.caFile, false],
+    [policy.tls.clientCertificateFile, false],
+    [policy.tls.clientKeyFile, true]
+  ] as Array<[string, boolean]>) {
+    try {
+      const fileStat = lstatSync(file)
+      if (
+        fileStat.isSymbolicLink() ||
+        !fileStat.isFile() ||
+        fileStat.size < 1 ||
+        fileStat.size > 64 * 1024 ||
+        (privateFile ? (fileStat.mode & 0o077) !== 0 : (fileStat.mode & 0o022) !== 0)
+      ) {
+        throw new Error('unsafe TLS file')
+      }
+      readFileSync(file)
+    } catch (_error) {
+      throw new PrivateDatasetError('private_dataset_tls_file_invalid')
+    }
+  }
+}
+
+function privateDatasetHttpsAgent(policy: PrivateDatasetPolicy): HttpsAgent | undefined {
+  if (!policy.tls) return undefined
+  return new HttpsAgent({
+    ca: readFileSync(policy.tls.caFile),
+    cert: readFileSync(policy.tls.clientCertificateFile),
+    key: readFileSync(policy.tls.clientKeyFile),
+    rejectUnauthorized: true,
+    minVersion: 'TLSv1.2',
+    keepAlive: false,
+    maxSockets: 1
+  })
 }
 
 function requestHeaders(
@@ -115,6 +166,7 @@ export async function downloadPrivateDataset(
       method: 'get',
       url: file.url,
       headers: requestHeaders(file, jobId, policy, environment),
+      httpsAgent: privateDatasetHttpsAgent(policy),
       responseType: 'stream',
       timeout: 30000,
       maxRedirects: 0,

@@ -90,7 +90,8 @@ import {
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
 
-const trivyImage = 'aquasec/trivy:0.69.3' // Use pinned versions for safety
+export const TRIVY_IMAGE =
+  'aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c'
 const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
 const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
@@ -3596,19 +3597,19 @@ export class C2DEngineDocker extends C2DEngine {
 
   private async checkscanDBImage(): Promise<void> {
     try {
-      await this.docker.getImage(trivyImage).inspect()
+      await this.docker.getImage(TRIVY_IMAGE).inspect()
     } catch (error) {
       if (error.statusCode !== 404) {
-        throw new Error(`Unable to inspect ${trivyImage}: ${error.message}`)
+        throw new Error(`Unable to inspect ${TRIVY_IMAGE}: ${error.message}`)
       }
-      CORE_LOGGER.info(`Trivy not found. Pulling ${trivyImage}...`)
-      const stream = await this.docker.pull(trivyImage)
+      CORE_LOGGER.info(`Trivy not found. Pulling ${TRIVY_IMAGE}...`)
+      const stream = await this.docker.pull(TRIVY_IMAGE)
       await new Promise((resolve, reject) => {
         this.docker.modem.followProgress(stream, (err, res) =>
           err ? reject(err) : resolve(res)
         )
       })
-      await this.docker.getImage(trivyImage).inspect()
+      await this.docker.getImage(TRIVY_IMAGE).inspect()
       CORE_LOGGER.info('Pull complete.')
     }
   }
@@ -3619,7 +3620,7 @@ export class C2DEngineDocker extends C2DEngine {
     let updater: Dockerode.Container = null
     try {
       updater = await this.docker.createContainer({
-        Image: trivyImage,
+        Image: TRIVY_IMAGE,
         Cmd: ['image', '--download-db-only'],
         HostConfig: {
           Binds: [`${this.trivyCachePath}:/root/.cache/trivy`]
@@ -3643,7 +3644,7 @@ export class C2DEngineDocker extends C2DEngine {
     let container: Dockerode.Container = null
     try {
       container = await this.docker.createContainer({
-        Image: trivyImage,
+        Image: TRIVY_IMAGE,
         Cmd: [
           'image',
           '--format',

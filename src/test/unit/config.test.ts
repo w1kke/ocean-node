@@ -12,7 +12,10 @@ import {
   C2DDockerConfigSchema,
   C2DEnvironmentConfigSchema
 } from '../../utils/config/schemas.js'
-import { createComputeEnvironmentId } from '../../components/c2d/compute_engine_docker.js'
+import {
+  createComputeEnvironmentId,
+  TRIVY_IMAGE
+} from '../../components/c2d/compute_engine_docker.js'
 
 let config: OceanNodeConfig
 describe('Should validate configuration from JSON', () => {
@@ -228,6 +231,65 @@ describe('Should require an explicit consumer result policy', () => {
     ).to.equal(false)
   })
 
+  it('requires a bounded secret mount and matching HTTPS identity for mTLS', () => {
+    const policy = {
+      url: 'https://crab-export.internal/api/v1/internal/c2d/rr-cohort',
+      maxBytes: 16 * 1024 * 1024,
+      approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
+      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
+      releaseId: 'b'.repeat(64),
+      tls: {
+        caFile: '/run/brainstem-secrets/crab-ca.pem',
+        clientCertificateFile: '/run/brainstem-secrets/ocean-client.pem',
+        clientKeyFile: '/run/brainstem-secrets/ocean-client-key.pem',
+        serverName: 'crab-export.internal'
+      }
+    }
+    const environment = {
+      ...baseEnvironment,
+      storageExpiry: 14 * 24 * 60 * 60,
+      consumerResultPolicy: {
+        mode: 'singleJson',
+        maxBytes: 262144,
+        resultContract: 'brainstem.c2d-result/v1'
+      }
+    }
+
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...environment,
+        privateDataset: policy
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...environment,
+        privateDataset: {
+          ...policy,
+          url: 'http://crab-export.internal/api/v1/internal/c2d/rr-cohort'
+        }
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...environment,
+        privateDataset: {
+          ...policy,
+          tls: { ...policy.tls, serverName: 'other.internal' }
+        }
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...environment,
+        privateDataset: {
+          ...policy,
+          tls: { ...policy.tls, clientKeyFile: '/tmp/client-key.pem' }
+        }
+      }).success
+    ).to.equal(false)
+  })
+
   it('rejects private datasets in exfiltration-prone environments', () => {
     const privateDataset = {
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
@@ -268,6 +330,10 @@ describe('Should require an explicit image scan severity policy', () => {
     resources: [{ id: 'disk', total: 1 }],
     free: { resources: [{ id: 'disk', max: 1 }] }
   }
+
+  it('pins the scanner itself by immutable digest', () => {
+    expect(TRIVY_IMAGE).to.match(/^aquasec\/trivy:[0-9.]+@sha256:[0-9a-f]{64}$/)
+  })
 
   it('allows disabled scanning without a severity policy', () => {
     expect(

@@ -123,6 +123,12 @@ export interface PrivateDatasetPolicy {
   approvedAlgorithmImage: string
   bearerTokenEnv: string
   releaseId: string
+  tls?: {
+    caFile: string
+    clientCertificateFile: string
+    clientKeyFile: string
+    serverName: string
+  }
 }
 
 export interface ComputeEnvironmentBaseConfig {

@@ -3,10 +3,19 @@ import { expect } from 'chai'
 import { createHash } from 'crypto'
 import { AddressInfo } from 'net'
 import { createServer, Server } from 'http'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import {
+  assertPrivateDatasetConfiguration,
   assertPrivateDatasetJob,
   downloadPrivateDataset,
   PrivateDatasetError
@@ -198,6 +207,49 @@ describe('Private dataset provisioning', () => {
     expect(() => assertPrivateDatasetJob(policy, IMAGE, 1, true)).to.throw(
       PrivateDatasetError,
       'private_dataset_remote_output_not_allowed'
+    )
+  })
+
+  it('fails closed on unsafe mTLS identity and key material', () => {
+    const caFile = path.join(directory, 'ca.pem')
+    const certificateFile = path.join(directory, 'client.pem')
+    const keyFile = path.join(directory, 'client-key.pem')
+    writeFileSync(caFile, 'generated test CA', { mode: 0o644 })
+    writeFileSync(certificateFile, 'generated test certificate', { mode: 0o644 })
+    writeFileSync(keyFile, 'generated test key', { mode: 0o600 })
+    const tlsPolicy: PrivateDatasetPolicy = {
+      ...policy,
+      url: 'https://crab-export.internal/api/v1/internal/c2d/rr-cohort',
+      tls: {
+        caFile,
+        clientCertificateFile: certificateFile,
+        clientKeyFile: keyFile,
+        serverName: 'crab-export.internal'
+      }
+    }
+
+    expect(() => assertPrivateDatasetConfiguration(tlsPolicy, environment)).not.to.throw()
+
+    tlsPolicy.tls!.serverName = 'other.internal'
+    expect(() => assertPrivateDatasetConfiguration(tlsPolicy, environment)).to.throw(
+      PrivateDatasetError,
+      'private_dataset_tls_identity_invalid'
+    )
+    tlsPolicy.tls!.serverName = 'crab-export.internal'
+
+    chmodSync(keyFile, 0o644)
+    expect(() => assertPrivateDatasetConfiguration(tlsPolicy, environment)).to.throw(
+      PrivateDatasetError,
+      'private_dataset_tls_file_invalid'
+    )
+    chmodSync(keyFile, 0o600)
+
+    const keyLink = path.join(directory, 'client-key-link.pem')
+    symlinkSync(keyFile, keyLink)
+    tlsPolicy.tls!.clientKeyFile = keyLink
+    expect(() => assertPrivateDatasetConfiguration(tlsPolicy, environment)).to.throw(
+      PrivateDatasetError,
+      'private_dataset_tls_file_invalid'
     )
   })
 })

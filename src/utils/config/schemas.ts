@@ -21,6 +21,23 @@ function isValidUrl(urlString: string): boolean {
   }
 }
 
+function isValidTlsServerName(value: string): boolean {
+  if (value.length < 1 || value.length > 253) return false
+  const labels = value.split('.')
+  for (const label of labels) {
+    if (label.length < 1 || label.length > 63) return false
+    if (label.startsWith('-') || label.endsWith('-')) return false
+    for (const character of label) {
+      const code = character.charCodeAt(0)
+      const isDigit = code >= 48 && code <= 57
+      const isUppercase = code >= 65 && code <= 90
+      const isLowercase = code >= 97 && code <= 122
+      if (!isDigit && !isUppercase && !isLowercase && character !== '-') return false
+    }
+  }
+  return true
+}
+
 export const SupportedNetworkSchema = z.object({
   chainId: z.number(),
   rpc: z.string(),
@@ -271,7 +288,22 @@ export const C2DEnvironmentConfigSchema = z
           .string()
           .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
         bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
-        releaseId: z.string().regex(/^[0-9a-f]{64}$/)
+        releaseId: z.string().regex(/^[0-9a-f]{64}$/),
+        tls: z
+          .object({
+            caFile: z
+              .string()
+              .regex(/^\/run\/brainstem-secrets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+            clientCertificateFile: z
+              .string()
+              .regex(/^\/run\/brainstem-secrets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+            clientKeyFile: z
+              .string()
+              .regex(/^\/run\/brainstem-secrets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+            serverName: z.string().refine(isValidTlsServerName, 'invalid TLS server name')
+          })
+          .strict()
+          .optional()
       })
       .strict()
       .optional()
@@ -283,6 +315,19 @@ export const C2DEnvironmentConfigSchema = z
     {
       message:
         'Each environment must have either a non-empty "fees" configuration or a "free" configuration'
+    }
+  )
+  .refine(
+    (data) => {
+      if (!data.privateDataset?.tls) return true
+      const url = new URL(data.privateDataset.url)
+      return (
+        url.protocol === 'https:' &&
+        url.hostname.toLowerCase() === data.privateDataset.tls.serverName.toLowerCase()
+      )
+    },
+    {
+      message: 'Private dataset mTLS requires HTTPS and a matching server name'
     }
   )
   .refine(
