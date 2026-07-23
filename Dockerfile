@@ -19,6 +19,7 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
     dumb-init \
     libatomic1 \
+    && apt-get remove -y --allow-remove-essential perl-base \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/node_modules/npm \
               /usr/local/lib/node_modules/corepack \
