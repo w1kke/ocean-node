@@ -2490,7 +2490,24 @@ export class C2DEngineDocker extends C2DEngine {
     )
   }
 
+  private retainedInsightMetadata(job: DBComputeJob): Record<string, string> | null {
+    const { metadata } = job
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+    const { purpose, insightId, resultSchema } = metadata
+    if (
+      typeof purpose !== 'string' ||
+      !['brainstem-insights-local-proof', 'brainstem-insights-paid'].includes(purpose) ||
+      typeof insightId !== 'string' ||
+      !/^did:ope:[0-9a-f]{64}$/.test(insightId) ||
+      resultSchema !== 'brainstem.c2d-result/v1'
+    ) {
+      return null
+    }
+    return { purpose, insightId, resultSchema }
+  }
+
   private sanitizePrivateJob(job: DBComputeJob): void {
+    const retainedMetadata = this.retainedInsightMetadata(job)
     delete job.did
     delete job.inputDID
     delete job.algoDID
@@ -2503,7 +2520,8 @@ export class C2DEngineDocker extends C2DEngine {
     job.algorithm = {} as ComputeAlgorithm
     job.assets = []
     job.containerImage = ''
-    delete job.metadata
+    if (retainedMetadata) job.metadata = retainedMetadata
+    else delete job.metadata
     delete job.terminationDetails
     delete job.encryptedDockerRegistryAuth
     delete job.output

@@ -202,6 +202,43 @@ describe('private aggregate result retention', () => {
     expect(denied?.message).to.include('not authorized')
   })
 
+  it('retains only the allowlisted Insight presentation metadata', async () => {
+    const finishedAt = Math.floor(Date.now() / 1000)
+    const job = makeJob(finishedAt)
+    const insightId = `did:ope:${'d'.repeat(64)}`
+    job.metadata = {
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      resultSchema: 'brainstem.c2d-result/v1',
+      privateNote: 'must not survive'
+    }
+    const db = {
+      updateJob: sinon.stub().resolves(1),
+      getJob: sinon.stub().callsFake(() => [job]),
+      getSettlementByJobId: sinon.stub().resolves(null)
+    }
+    const engine = makeEngine(tempFolder, db)
+    seedPrivateJobDirectory(engine)
+
+    expect(await (engine as any).cleanupPrivateJobMaterial(job)).to.equal(true)
+    expect(job.metadata).to.deep.equal({
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      resultSchema: 'brainstem.c2d-result/v1'
+    })
+
+    const [status] = await engine.getComputeJobStatus(OWNER, null, JOB_ID)
+    expect(status.metadata).to.deep.equal(job.metadata)
+    expect(status.results).to.deep.equal([
+      {
+        filename: 'result.json',
+        filesize: RESULT.length,
+        type: 'output',
+        index: 0
+      }
+    ])
+  })
+
   it('stops serving at the exact expiry boundary and deletes disk plus database idempotently', async () => {
     const now = Math.floor(Date.now() / 1000)
     const job = makeJob(now)
