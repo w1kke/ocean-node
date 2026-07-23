@@ -1,0 +1,56 @@
+FROM node:22.22.2-alpine3.23@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS builder
+
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
+      build-base \
+      git \
+      libatomic \
+      python3
+
+WORKDIR /usr/src/app
+COPY package*.json ./
+COPY scripts/ ./scripts/
+RUN npm ci
+COPY . .
+RUN npm run build && npm prune --omit=dev
+
+
+FROM node:22.22.2-alpine3.23@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS runner
+
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
+      dumb-init \
+      libatomic \
+      libstdc++ \
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/lib/node_modules/corepack \
+              /usr/local/bin/npm \
+              /usr/local/bin/npx \
+              /usr/local/bin/corepack
+
+ENV NODE_ENV=production \
+    IPFS_GATEWAY='https://ipfs.io/' \
+    ARWEAVE_GATEWAY='https://arweave.net/' \
+    P2P_ipV4BindTcpPort=9000 \
+    P2P_ipV4BindWsPort=9001 \
+    P2P_ipV6BindTcpPort=9002 \
+    P2P_ipV6BindWsPort=9003 \
+    P2P_ipV4BindWssPort=9005 \
+    HTTP_API_PORT=8000
+
+EXPOSE 9000 9001 9002 9003 9005 8000
+
+WORKDIR /usr/src/app
+
+COPY --chown=node:node --from=builder /usr/src/app/dist ./dist
+COPY --chown=node:node --from=builder /usr/src/app/node_modules ./node_modules
+COPY --chown=node:node --from=builder /usr/src/app/schemas ./schemas
+COPY --chown=node:node --from=builder /usr/src/app/package.json ./
+COPY --chown=node:node --from=builder /usr/src/app/config.json ./
+
+RUN mkdir -p databases c2d_storage logs \
+    && chown -R node:node databases c2d_storage logs
+
+USER node
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "--max-old-space-size=6144", "--trace-warnings", "--experimental-specifier-resolution=node", "dist/index.js"]
