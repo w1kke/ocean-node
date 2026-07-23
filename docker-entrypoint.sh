@@ -2,7 +2,7 @@
 set -e
 
 # Fix ownership of directories that may be mounted as volumes (owned by root).
-# Runs as root, then drops to 'node' user via gosu.
+# Runs as root, then drops to the existing 'node' user via setpriv.
 chown -R node:node /usr/src/app/databases /usr/src/app/c2d_storage /usr/src/app/logs 2>/dev/null || true
 
 # Add node user to the docker group matching the host's /var/run/docker.sock GID,
@@ -16,4 +16,4 @@ if [ -S /var/run/docker.sock ]; then
     usermod -aG "$DOCKER_GROUP" node
 fi
 
-exec gosu node dumb-init -- "$@"
+exec setpriv --reuid=node --regid=node --init-groups dumb-init -- "$@"

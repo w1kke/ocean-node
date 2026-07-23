@@ -15,11 +15,16 @@ RUN npm run build && npm prune --omit=dev
 
 
 FROM node:22.22.2-trixie-slim@sha256:76043ed3132293c26b960ede4358d3c8ba424ee64662cd2d56318b76fcc51c4c AS runner
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     dumb-init \
-    gosu \
     libatomic1 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/lib/node_modules/corepack \
+              /usr/local/bin/npm \
+              /usr/local/bin/npx \
+              /usr/local/bin/corepack
 
 ENV NODE_ENV=production \
     IPFS_GATEWAY='https://ipfs.io/' \
