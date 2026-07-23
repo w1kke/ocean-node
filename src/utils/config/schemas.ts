@@ -225,7 +225,8 @@ export const ConsumerResultPolicySchema = z.discriminatedUnion('mode', [
         .number()
         .int()
         .positive()
-        .max(10 * 1024 * 1024)
+        .max(10 * 1024 * 1024),
+      resultContract: z.literal('brainstem.c2d-result/v1').optional()
     })
     .strict()
 ])
@@ -288,10 +289,11 @@ export const C2DEnvironmentConfigSchema = z
       !data.privateDataset ||
       (data.enableNetwork === false &&
         data.consumerResultPolicy.mode === 'singleJson' &&
+        data.consumerResultPolicy.resultContract === 'brainstem.c2d-result/v1' &&
         data.free?.allowImageBuild !== true),
     {
       message:
-        'Private dataset environments require disabled algorithm networking, bounded single-JSON results, and disabled image builds'
+        'Private dataset environments require disabled algorithm networking, bounded contract-validated single-JSON results, and disabled image builds'
     }
   )
   .refine((data) => data.storageExpiry >= data.maxJobDuration, {
@@ -319,6 +321,7 @@ export const C2DDockerConfigSchema = z.array(
       keyPath: z.string().optional(),
       imageRetentionDays: z.number().int().min(1).optional().default(7),
       imageCleanupInterval: z.number().int().min(3600).optional().default(86400), // min 1 hour, default 24 hours
+      paymentClaimInterval: z.number().int().min(1).optional().default(3600),
       scanImages: z.boolean().optional().default(false),
       scanImageRejectSeverities: z.array(ImageScanSeveritySchema).optional(),
       scanImageDBUpdateInterval: z.number().int().min(3600).optional().default(43200), // default 43200 (12 hours)

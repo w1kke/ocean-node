@@ -128,7 +128,11 @@ describe('Should require an explicit consumer result policy', () => {
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,
-        consumerResultPolicy: { mode: 'singleJson', maxBytes: 262144 },
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
         privateDataset
       }).success
     ).to.equal(true)
@@ -142,11 +146,22 @@ describe('Should require an explicit consumer result policy', () => {
     const withPolicy = createComputeEnvironmentId(
       'cluster',
       null,
-      { mode: 'singleJson', maxBytes: 262144 },
+      {
+        mode: 'singleJson',
+        maxBytes: 262144,
+        resultContract: 'brainstem.c2d-result/v1'
+      },
       '0',
       privateDataset
     )
     expect(withPolicy).not.to.equal(withoutPolicy)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        consumerResultPolicy: { mode: 'singleJson', maxBytes: 262144 },
+        privateDataset
+      }).success
+    ).to.equal(false)
   })
 
   it('rejects unbounded or mutable private dataset policies', () => {
@@ -261,6 +276,28 @@ describe('Should require an explicit image scan severity policy', () => {
           scanImageRejectSeverities: ['SEVERE'],
           environments: [environment]
         }
+      ]).success
+    ).to.equal(false)
+  })
+})
+
+describe('Should retain a bounded settlement interval', () => {
+  const environment = {
+    consumerResultPolicy: { mode: 'archive' },
+    resources: [{ id: 'disk', total: 1 }],
+    free: { resources: [{ id: 'disk', max: 1 }] }
+  }
+
+  it('keeps an explicit interval and applies a safe default', () => {
+    const explicit = C2DDockerConfigSchema.parse([
+      { paymentClaimInterval: 2, environments: [environment] }
+    ])
+    expect(explicit[0].paymentClaimInterval).to.equal(2)
+    const defaulted = C2DDockerConfigSchema.parse([{ environments: [environment] }])
+    expect(defaulted[0].paymentClaimInterval).to.equal(3600)
+    expect(
+      C2DDockerConfigSchema.safeParse([
+        { paymentClaimInterval: 0, environments: [environment] }
       ]).success
     ).to.equal(false)
   })

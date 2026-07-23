@@ -2,7 +2,9 @@ import { typesenseSchemas, TypesenseSchema } from './TypesenseSchemas.js'
 import {
   C2DStatusNumber,
   C2DStatusText,
-  type DBComputeJob
+  type DBComputeJob,
+  type DBSettlementIntent,
+  type DBSettlementStatus
 } from '../../@types/C2D/C2D.js'
 import sqlite3, { RunResult } from 'sqlite3'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
@@ -22,6 +24,16 @@ interface ComputeDatabaseProvider {
   ): Promise<DBComputeJob[]>
   updateImage(image: string): Promise<void>
   getOldImages(retentionDays: number): Promise<string[]>
+  insertSettlementIntent(intent: DBSettlementIntent): Promise<boolean>
+  getSettlementByKey(settlementKey: string): Promise<DBSettlementIntent | null>
+  getSettlementByJobId(jobId: string): Promise<DBSettlementIntent | null>
+  updateSettlementStatus(
+    settlementKey: string,
+    status: DBSettlementStatus,
+    transactionHash?: string,
+    receiptBlock?: number,
+    settledAmount?: number
+  ): Promise<boolean>
 }
 
 function getInternalStructure(job: DBComputeJob): any {
@@ -50,7 +62,8 @@ function getInternalStructure(job: DBComputeJob): any {
     output: job.output,
     jobIdHash: job.jobIdHash,
     buildStartTimestamp: job.buildStartTimestamp,
-    buildStopTimestamp: job.buildStopTimestamp
+    buildStopTimestamp: job.buildStopTimestamp,
+    resultValidation: job.resultValidation
   }
   return internalBlob
 }
@@ -130,6 +143,31 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
     })
   }
 
+  private async ensureSettlementColumns(): Promise<void> {
+    const columns = await new Promise<Array<{ name: string }>>((resolve, reject) => {
+      this.db.all(
+        'PRAGMA table_info(c2d_settlements)',
+        (err, rows: Array<{ name: string }> | undefined) => {
+          if (err) reject(err)
+          else resolve(rows ?? [])
+        }
+      )
+    })
+    const names = new Set(columns.map((column) => column.name))
+    for (const [name, type] of [
+      ['rawTransaction', 'TEXT'],
+      ['settledAmount', 'REAL']
+    ]) {
+      if (names.has(name)) continue
+      await new Promise<void>((resolve, reject) => {
+        this.db.run(`ALTER TABLE c2d_settlements ADD COLUMN ${name} ${type}`, (err) => {
+          if (err) reject(err)
+          else resolve()
+        })
+      })
+    }
+  }
+
   createImageTable(): Promise<void> {
     const createTableSQL = `
       CREATE TABLE IF NOT EXISTS docker_images (
@@ -146,6 +184,133 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
           resolve()
         }
       })
+    })
+  }
+
+  createSettlementTable(): Promise<void> {
+    const createTableSQL = `
+      CREATE TABLE IF NOT EXISTS c2d_settlements (
+        settlementKey TEXT PRIMARY KEY,
+        jobId TEXT NOT NULL UNIQUE,
+        jobIdHash TEXT NOT NULL,
+        chainId INTEGER NOT NULL,
+        escrowAddress TEXT NOT NULL,
+        token TEXT NOT NULL,
+        payer TEXT NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('charge', 'release')),
+        amount REAL NOT NULL CHECK (amount >= 0),
+        reason TEXT NOT NULL CHECK (length(reason) > 0),
+        preparedBlock INTEGER NOT NULL CHECK (preparedBlock >= 0),
+        status TEXT NOT NULL CHECK (status IN (
+          'prepared', 'broadcast', 'charged', 'not_charged', 'refunded',
+          'refund_required', 'unknown'
+        )),
+        transactionHash TEXT,
+        rawTransaction TEXT,
+        settledAmount REAL CHECK (settledAmount >= 0),
+        receiptBlock INTEGER CHECK (receiptBlock >= 0),
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `
+    return new Promise<void>((resolve, reject) => {
+      this.db.run(createTableSQL, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    }).then(() => this.ensureSettlementColumns())
+  }
+
+  insertSettlementIntent(intent: DBSettlementIntent): Promise<boolean> {
+    const sql = `
+      INSERT OR IGNORE INTO c2d_settlements (
+        settlementKey, jobId, jobIdHash, chainId, escrowAddress, token, payer,
+        decision, amount, reason, preparedBlock, status, transactionHash,
+        rawTransaction, settledAmount, receiptBlock, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+    const values = [
+      intent.settlementKey,
+      intent.jobId,
+      intent.jobIdHash,
+      intent.chainId,
+      intent.escrowAddress,
+      intent.token,
+      intent.payer,
+      intent.decision,
+      intent.amount,
+      intent.reason,
+      intent.preparedBlock,
+      intent.status,
+      intent.transactionHash ?? null,
+      intent.rawTransaction ?? null,
+      intent.settledAmount ?? null,
+      intent.receiptBlock ?? null,
+      intent.createdAt,
+      intent.updatedAt
+    ]
+    return new Promise<boolean>((resolve, reject) => {
+      this.db.run(sql, values, function (this: RunResult, err) {
+        if (err) reject(err)
+        else resolve(this.changes === 1)
+      })
+    })
+  }
+
+  private getSettlement(
+    where: string,
+    value: string
+  ): Promise<DBSettlementIntent | null> {
+    return new Promise<DBSettlementIntent | null>((resolve, reject) => {
+      this.db.get(
+        `SELECT * FROM c2d_settlements WHERE ${where} = ?`,
+        [value],
+        (err, row: DBSettlementIntent | undefined) => {
+          if (err) reject(err)
+          else resolve(row ?? null)
+        }
+      )
+    })
+  }
+
+  getSettlementByKey(settlementKey: string): Promise<DBSettlementIntent | null> {
+    return this.getSettlement('settlementKey', settlementKey)
+  }
+
+  getSettlementByJobId(jobId: string): Promise<DBSettlementIntent | null> {
+    return this.getSettlement('jobId', jobId)
+  }
+
+  updateSettlementStatus(
+    settlementKey: string,
+    status: DBSettlementStatus,
+    transactionHash?: string,
+    receiptBlock?: number,
+    settledAmount?: number
+  ): Promise<boolean> {
+    const sql = `
+      UPDATE c2d_settlements
+      SET status = ?, transactionHash = COALESCE(?, transactionHash),
+          receiptBlock = COALESCE(?, receiptBlock),
+          settledAmount = COALESCE(?, settledAmount), updatedAt = ?
+      WHERE settlementKey = ?
+    `
+    return new Promise<boolean>((resolve, reject) => {
+      this.db.run(
+        sql,
+        [
+          status,
+          transactionHash ?? null,
+          receiptBlock ?? null,
+          settledAmount ?? null,
+          Date.now(),
+          settlementKey
+        ],
+        function (this: RunResult, err) {
+          if (err) reject(err)
+          else resolve(this.changes === 1)
+        }
+      )
     })
   }
 

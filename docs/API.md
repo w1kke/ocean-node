@@ -1504,10 +1504,22 @@ starts a free compute job and returns jobId if succesfull
       { "id": "disk", "amount": 0 }
     ],
     "isFree": true,
-    "metadata": { "key": "value" }
+    "metadata": { "key": "value" },
+    "settlement": {
+      "status": "charged",
+      "amount": 0.25,
+      "chainId": 11155420,
+      "token": "0x0000000000000000000000000000000000000000",
+      "transactionHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    }
   }
 ]
 ```
+
+`settlement` is omitted until an intent exists. `prepared`, pending-broadcast, and
+unreconciled states are projected as `{ "status": "unknown", "amount": 0 }`
+without a transaction hash. `charged`, `not_charged`, `refunded`, and
+`refund_required` expose only confirmed chain facts.
 
 ### `HTTP` GET /api/services/compute
 

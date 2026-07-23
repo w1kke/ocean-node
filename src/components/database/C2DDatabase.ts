@@ -3,7 +3,9 @@ import fs from 'fs'
 import {
   ComputeEnvironment,
   DBComputeJob,
-  C2DStatusNumber
+  C2DStatusNumber,
+  DBSettlementIntent,
+  DBSettlementStatus
 } from '../../@types/C2D/C2D.js'
 import { SQLiteCompute } from './sqliteCompute.js'
 import { DATABASE_LOGGER } from '../../utils/logging/common.js'
@@ -30,6 +32,7 @@ export class C2DDatabase extends AbstractDatabase {
       this.provider = new SQLiteCompute('databases/c2dDatabase.sqlite')
       await this.provider.createTable()
       await this.provider.createImageTable()
+      await this.provider.createSettlementTable()
 
       return this
     })() as unknown as C2DDatabase
@@ -112,6 +115,34 @@ export class C2DDatabase extends AbstractDatabase {
 
   async getOldImages(retentionDays: number): Promise<string[]> {
     return await this.provider.getOldImages(retentionDays)
+  }
+
+  async insertSettlementIntent(intent: DBSettlementIntent): Promise<boolean> {
+    return await this.provider.insertSettlementIntent(intent)
+  }
+
+  async getSettlementByKey(settlementKey: string): Promise<DBSettlementIntent | null> {
+    return await this.provider.getSettlementByKey(settlementKey)
+  }
+
+  async getSettlementByJobId(jobId: string): Promise<DBSettlementIntent | null> {
+    return await this.provider.getSettlementByJobId(jobId)
+  }
+
+  async updateSettlementStatus(
+    settlementKey: string,
+    status: DBSettlementStatus,
+    transactionHash?: string,
+    receiptBlock?: number,
+    settledAmount?: number
+  ): Promise<boolean> {
+    return await this.provider.updateSettlementStatus(
+      settlementKey,
+      status,
+      transactionHash,
+      receiptBlock,
+      settledAmount
+    )
   }
 
   /**

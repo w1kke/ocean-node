@@ -7,7 +7,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import os from 'os'
 import path from 'path'
 
-import { readSingleJsonResultArchive } from '../../components/c2d/consumerResult.js'
+import {
+  readSingleJsonResultArchive,
+  validateConsumerResultContract
+} from '../../components/c2d/consumerResult.js'
 import {
   C2DStatusNumber,
   C2DStatusText,
@@ -119,6 +122,64 @@ describe('single JSON consumer result', () => {
     )
     const archive = await makeArchive([{ name: 'result.json', body: '{}' }])
     await expectRejected(archive.subarray(0, 600), 'unexpected end of data')
+  })
+
+  it('classifies only contract-valid aggregate and suppressed results as billable', () => {
+    const base: any = {
+      schema: 'brainstem.c2d-result/v1',
+      status: 'complete',
+      title: 'Resting R-R cohort summary',
+      summary: 'Aggregate participant-weighted result.',
+      metrics: [{ label: 'Median R-R', value: 810, unit: 'ms' }],
+      charts: [],
+      table: null,
+      warnings: [],
+      provenance: {
+        algorithmVersion: '1.0.0',
+        algorithmImageDigest: `sha256:${'a'.repeat(64)}`,
+        datasetSchemaVersion: 'brainstem.private-rr-cohort/v1',
+        generatedAt: '2026-07-23T00:00:00Z'
+      }
+    }
+    const policy = {
+      mode: 'singleJson' as const,
+      maxBytes: 262144,
+      resultContract: 'brainstem.c2d-result/v1' as const
+    }
+
+    expect(
+      validateConsumerResultContract(Buffer.from(JSON.stringify(base)), policy)
+    ).to.deep.equal({
+      contract: 'brainstem.c2d-result/v1',
+      status: 'complete',
+      billable: true
+    })
+    const suppressed = {
+      ...base,
+      status: 'insufficient_data',
+      metrics: [],
+      summary: 'The eligible cohort is below the disclosure threshold.'
+    }
+    expect(
+      validateConsumerResultContract(Buffer.from(JSON.stringify(suppressed)), policy)
+        ?.billable
+    ).to.equal(true)
+    const failed = { ...suppressed, status: 'failed' }
+    expect(
+      validateConsumerResultContract(Buffer.from(JSON.stringify(failed)), policy)
+        ?.billable
+    ).to.equal(false)
+
+    for (const invalid of [
+      { ...base, participantId: 'must-not-leak' },
+      { ...base, summary: 'See https://private.example/result' },
+      { ...base, status: 'insufficient_data', metrics: base.metrics },
+      { ...base, metrics: [], charts: [], table: null }
+    ]) {
+      expect(() =>
+        validateConsumerResultContract(Buffer.from(JSON.stringify(invalid)), policy)
+      ).to.throw('does not match')
+    }
   })
 
   it('publishes only validated bytes to local or remote storage', async () => {

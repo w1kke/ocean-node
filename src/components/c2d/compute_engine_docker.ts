@@ -26,7 +26,9 @@ import type {
   ComputeResourcesPricingInfo,
   ConsumerResultPolicy,
   PrivateDatasetPolicy,
-  ImageScanSeverity
+  ImageScanSeverity,
+  DBSettlementIntent,
+  DBSettlementStatus
 } from '../../@types/C2D/C2D.js'
 import { BASE_CHAIN_ID, USDC_TOKEN_ADDRESS_BASE } from '../../utils/config.js'
 import { C2DEngine } from './compute_engine_base.js'
@@ -59,7 +61,16 @@ import { FindDdoHandler } from '../core/handler/ddoHandler.js'
 import { OceanNode } from '../../OceanNode.js'
 import { KeyManager } from '../KeyManager/index.js'
 import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.js'
-import { readSingleJsonResultArchive } from './consumerResult.js'
+import {
+  readSingleJsonResultArchive,
+  validateConsumerResultContract
+} from './consumerResult.js'
+import {
+  decideSettlement,
+  projectSettlement,
+  sameSettlementIntent,
+  SETTLEMENT_JOB_STATUSES
+} from './settlement.js'
 import { evaluateTrivyReport } from './imageScan.js'
 import { ValidateParams } from '../httpRoutes/validateCommands.js'
 import { Service } from '@oceanprotocol/ddo-js'
@@ -112,6 +123,7 @@ export class C2DEngineDocker extends C2DEngine {
   private imageCleanupTimer: NodeJS.Timeout | null = null
   private paymentClaimInitialTimer: NodeJS.Timeout | null = null
   private paymentClaimTimer: NodeJS.Timeout | null = null
+  private static isPaymentClaimRunning: boolean = false
   private scanDBUpdateInitialTimer: NodeJS.Timeout | null = null
   private scanDBUpdateTimer: NodeJS.Timeout | null = null
   private static DEFAULT_DOCKER_REGISTRY = 'https://registry-1.docker.io'
@@ -630,317 +642,328 @@ export class C2DEngineDocker extends C2DEngine {
   }
 
   private async claimPayments(): Promise<void> {
-    const currentTimestamp = BigInt(Math.floor(Date.now() / 1000))
-    const envs: string[] = []
-    const envsChains: string[] = []
-    // Group jobs by operation type and chain for batch processing
-    const jobsToClaim: Array<{
-      job: DBComputeJob
-      cost: number
-      proof: string
-    }> = []
-    const jobsToCancel: DBComputeJob[] = []
-    const jobsWithoutLock: DBComputeJob[] = []
+    if (C2DEngineDocker.isPaymentClaimRunning) return
+    C2DEngineDocker.isPaymentClaimRunning = true
+    try {
+      const currentTimestamp = BigInt(Math.floor(Date.now() / 1000))
+      const envIds = this.envs.map((env) => env.id)
+      const jobs = await this.db.getJobsByStatus(envIds, SETTLEMENT_JOB_STATUSES)
+      CORE_LOGGER.info(`ClaimPayments: got ${jobs.length} jobs to reconcile`)
 
-    for (const env of this.envs) {
-      envs.push(env.id)
-      for (const chain in env.fees) {
-        if (!envsChains.includes(chain)) envsChains.push(chain)
-      }
-    }
-
-    // get all jobs that needs to be paid
-    const jobs = await this.db.getJobsByStatus(envs, [
-      C2DStatusNumber.AlgorithmFailed,
-      C2DStatusNumber.DiskQuotaExceeded,
-      C2DStatusNumber.VulnerableImage,
-      C2DStatusNumber.ImageScanFailed,
-      C2DStatusNumber.ResultsFetchFailed,
-      C2DStatusNumber.ResultsUploadFailed,
-      C2DStatusNumber.JobSettle
-    ])
-    CORE_LOGGER.info(`ClaimPayments:  Got ${jobs.length} jobs to check`)
-    if (jobs.length > 0) {
       const providerAddress = this.getKeyManager().getEthAddress()
-      const chains: Set<number> = new Set()
-      // get all unique chains
-      for (const job of jobs) {
-        if (job.payment && job.payment.token) {
-          chains.add(job.payment.chainId)
-        }
-      }
-
-      // Get all locks for all chains
-      const locks: any[] = []
+      const chains = new Set(
+        jobs.flatMap((job) => (job.payment?.token ? [job.payment.chainId] : []))
+      )
+      const locksByChain = new Map<number, any[] | null>()
       for (const chain of chains) {
         try {
-          const contractLocks = await this.escrow.getLocks(
+          locksByChain.set(
             chain,
-            ZeroAddress,
-            ZeroAddress,
-            providerAddress
+            await this.escrow.getLocks(chain, ZeroAddress, ZeroAddress, providerAddress)
           )
-          if (contractLocks) {
-            locks.push(...contractLocks)
-          }
-        } catch (e) {
-          CORE_LOGGER.error(`Failed to get locks for chain ${chain}: ${e.message}`)
+        } catch (error) {
+          CORE_LOGGER.error(`Failed to get locks for chain ${chain}: ${error.message}`)
+          locksByChain.set(chain, null)
         }
       }
 
-      // Process each job to determine what operation is needed
-      let duration
       for (const job of jobs) {
-        // Calculate algo duration
-        duration = parseFloat(job.algoStopTimestamp) - parseFloat(job.algoStartTimestamp)
-        duration += this.getValidBuildDurationSeconds(job)
-
-        // Free jobs or jobs without payment info - mark as finished
         if (job.isFree || !job.payment) {
-          jobsWithoutLock.push(job)
+          await this.finishJobWithoutPayment(job)
           continue
         }
-
-        // Find matching lock
-        const lock = locks.find(
-          (lock) => BigInt(lock.jobId.toString()) === BigInt(job.jobIdHash)
-        )
-
-        if (!lock) {
-          // No lock found, mark as finished
-          jobsWithoutLock.push(job)
-          continue
-        }
-
-        // Check if lock is expired
-        const lockExpiry = BigInt(lock.expiry.toString())
-        if (currentTimestamp > lockExpiry) {
-          // Lock expired, cancel it
-          jobsToCancel.push(job)
-          continue
-        }
-
-        if (
-          job.status === C2DStatusNumber.VulnerableImage ||
-          job.status === C2DStatusNumber.ImageScanFailed
-        ) {
-          // A denied image never reached billable execution. Claiming zero closes the
-          // Enterprise Escrow lock and releases its full amount back to the payer.
-          const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
-          jobsToClaim.push({ job, cost: 0, proof })
-          continue
-        }
-
-        // Get environment to calculate cost
-        const env = await this.getComputeEnvironment(job.payment.chainId, job.environment)
-
-        if (!env) {
-          CORE_LOGGER.warn(
-            `Environment not found for job ${job.jobId}, skipping payment claim`
-          )
-          continue
-        }
-
-        let minDuration = Math.abs(duration)
-        if (minDuration > job.maxJobDuration) {
-          minDuration = job.maxJobDuration
-        }
-        if (
-          `minJobDuration` in env &&
-          env.minJobDuration &&
-          minDuration < env.minJobDuration
-        ) {
-          minDuration = env.minJobDuration
-        }
-
-        if (minDuration > 0) {
-          // We need to claim payment
-          const fee = env.fees?.[job.payment.chainId]?.find(
-            (fee) => fee.feeToken === job.payment.token
-          )
-
-          if (!fee) {
-            CORE_LOGGER.warn(
-              `Fee not found for job ${job.jobId}, token ${job.payment.token}, skipping`
-            )
-            continue
-          }
-
-          const cost = this.getTotalCostOfJob(job.resources, minDuration, fee)
-          const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
-          jobsToClaim.push({ job, cost, proof })
-        } else {
-          // No payment due, cancel the lock
-          jobsToCancel.push(job)
-        }
-      }
-
-      // Batch process claims by chain
-      const claimsByChain = new Map<
-        number,
-        Array<{ job: DBComputeJob; cost: number; proof: string }>
-      >()
-      for (const claim of jobsToClaim) {
-        const { chainId } = claim.job.payment!
-        if (!claimsByChain.has(chainId)) {
-          claimsByChain.set(chainId, [])
-        }
-        claimsByChain.get(chainId)!.push(claim)
-      }
-
-      // Process batch claims
-      for (const [chainId, claims] of claimsByChain.entries()) {
-        if (claims.length === 0) continue
-
+        const chainLocks = locksByChain.get(job.payment.chainId)
+        if (chainLocks === null || chainLocks === undefined) continue
         try {
-          const jobs = claims.map((c) => c.job)
-          const tokens = jobs.map((j) => j.payment!.token)
-          const payers = jobs.map((j) => j.owner)
-          const amounts = claims.map((c) => c.cost)
-          const proofs = claims.map((c) => c.proof)
-
-          const txId = await this.escrow.claimLocks(
-            chainId,
-            jobs.map((j) => j.jobId),
-            tokens,
-            payers,
-            amounts,
-            proofs
-          )
-          if (txId) {
-            // Update all jobs with the transaction ID
-            for (const claim of claims) {
-              if (claim.job.payment) {
-                claim.job.payment.claimTx = txId
-                claim.job.payment.cost = claim.cost
-              }
-              claim.job.status = C2DStatusNumber.JobFinished
-              claim.job.statusText = C2DStatusText.JobFinished
-              await this.db.updateJob(claim.job)
-            }
-            CORE_LOGGER.info(
-              `Successfully claimed ${claims.length} locks in batch transaction ${txId}`
-            )
-          }
-        } catch (e) {
+          await this.reconcileJobSettlement(job, chainLocks, currentTimestamp)
+        } catch (error) {
           CORE_LOGGER.error(
-            `Failed to batch claim locks for chain ${chainId}: ${e.message}`
+            `Failed to reconcile settlement for job ${job.jobId}: ${error.message}`
           )
-          // Fallback to individual processing on batch failure
-          for (const claim of claims) {
-            try {
-              const txId = await this.escrow.claimLock(
-                chainId,
-                claim.job.jobId,
-                claim.job.payment!.token,
-                claim.job.owner,
-                claim.cost,
-                claim.proof
-              )
-              if (txId) {
-                if (claim.job.payment) {
-                  claim.job.payment.claimTx = txId
-                  claim.job.payment.cost = claim.cost
-                }
-                claim.job.status = C2DStatusNumber.JobFinished
-                claim.job.statusText = C2DStatusText.JobFinished
-                await this.db.updateJob(claim.job)
-              }
-            } catch (err) {
-              CORE_LOGGER.error(
-                `Failed to claim lock for job ${claim.job.jobId}: ${err.message}`
-              )
-            }
-          }
         }
       }
 
-      // Batch process cancellations by chain
-      const cancellationsByChain = new Map<number, DBComputeJob[]>()
-      for (const job of jobsToCancel) {
-        const { chainId } = job.payment!
-        if (!cancellationsByChain.has(chainId)) {
-          cancellationsByChain.set(chainId, [])
-        }
-        cancellationsByChain.get(chainId)!.push(job)
+      const envChains = new Set<number>()
+      const knownJobHashes = new Set(
+        jobs
+          .filter((job) => job.payment && job.jobIdHash)
+          .map((job) => BigInt(job.jobIdHash).toString())
+      )
+      for (const env of this.envs) {
+        for (const chain of Object.keys(env.fees ?? {})) envChains.add(Number(chain))
       }
-
-      // Process batch cancellations
-      for (const [chainId, jobsToCancelBatch] of cancellationsByChain.entries()) {
-        if (jobsToCancelBatch.length === 0) continue
-
-        try {
-          const jobIds = jobsToCancelBatch.map((j) => j.jobId)
-          const tokens = jobsToCancelBatch.map((j) => j.payment!.token)
-          const payers = jobsToCancelBatch.map((j) => j.owner)
-
-          const txId = await this.escrow.cancelExpiredLocks(
-            chainId,
-            jobIds,
-            tokens,
-            payers
-          )
-
-          if (txId) {
-            // Update all jobs
-            for (const job of jobsToCancelBatch) {
-              if (job.payment) job.payment.cancelTx = txId
-              job.status = C2DStatusNumber.JobFinished
-              job.statusText = C2DStatusText.JobFinished
-              await this.db.updateJob(job)
-            }
-            CORE_LOGGER.info(
-              `Successfully cancelled ${jobsToCancelBatch.length} expired locks in batch transaction ${txId}`
-            )
-          }
-        } catch (e) {
-          CORE_LOGGER.error(
-            `Failed to batch cancel locks for chain ${chainId}: ${e.message}`
-          )
-          // Fallback to individual processing on batch failure
-          for (const job of jobsToCancelBatch) {
-            try {
-              const txId = await this.escrow.cancelExpiredLock(
-                chainId,
-                job.jobId,
-                job.payment!.token,
-                job.owner
-              )
-              if (txId) {
-                if (job.payment) job.payment.cancelTx = txId
-                job.status = C2DStatusNumber.JobFinished
-                job.statusText = C2DStatusText.JobFinished
-                await this.db.updateJob(job)
-              }
-            } catch (err) {
-              CORE_LOGGER.error(
-                `Failed to cancel lock for job ${job.jobId}: ${err.message}`
-              )
-            }
-          }
-        }
+      for (const chain of envChains) {
+        await this.cleanUpUnknownLocks(String(chain), currentTimestamp, knownJobHashes)
       }
-
-      // Mark jobs without locks as finished
-      for (const job of jobsWithoutLock) {
-        job.status = C2DStatusNumber.JobFinished
-        job.statusText = C2DStatusText.JobFinished
-        if (job.payment) {
-          job.payment.cancelTx = 'nolock'
-          job.payment.claimTx = 'nolock'
-        }
-        await this.db.updateJob(job)
-      }
-    }
-    // force clean of locks without jobs
-    // ideally, we should never have locks without jobs in db
-    // (handled above). This means somehow that db got deleted
-    for (const chain of envsChains) {
-      this.cleanUpUnknownLocks(chain, currentTimestamp)
+    } finally {
+      C2DEngineDocker.isPaymentClaimRunning = false
     }
   }
 
-  private async cleanUpUnknownLocks(chain: string, currentTimestamp: bigint) {
+  private async finishJobWithoutPayment(job: DBComputeJob): Promise<void> {
+    job.status = C2DStatusNumber.JobFinished
+    job.statusText = C2DStatusText.JobFinished
+    await this.db.updateJob(job)
+  }
+
+  private async calculateSettlementDecision(
+    job: DBComputeJob,
+    expired: boolean
+  ): Promise<{ decision: 'charge' | 'release'; amount: number; reason: string }> {
+    if (expired) return { decision: 'release', amount: 0, reason: 'lock_expired' }
+    if (job.status !== C2DStatusNumber.JobSettle) {
+      return decideSettlement(job, 0, this.privateDatasetPolicies.has(job.environment))
+    }
+
+    const env = await this.getComputeEnvironment(job.payment.chainId, job.environment)
+    const fee = env?.fees?.[job.payment.chainId]?.find(
+      (candidate) => candidate.feeToken === job.payment.token
+    )
+    const duration =
+      Math.abs(parseFloat(job.algoStopTimestamp) - parseFloat(job.algoStartTimestamp)) +
+      this.getValidBuildDurationSeconds(job)
+    if (!env || !fee || !Number.isFinite(duration)) {
+      return { decision: 'release', amount: 0, reason: 'settlement_configuration_error' }
+    }
+
+    let billableDuration = Math.min(duration, job.maxJobDuration)
+    if (env.minJobDuration && billableDuration < env.minJobDuration) {
+      billableDuration = env.minJobDuration
+    }
+    const cost = this.getTotalCostOfJob(job.resources, billableDuration, fee)
+    if (!Number.isFinite(cost) || cost < 0) {
+      return { decision: 'release', amount: 0, reason: 'settlement_cost_invalid' }
+    }
+    return decideSettlement(job, cost, this.privateDatasetPolicies.has(job.environment))
+  }
+
+  private async reconcileJobSettlement(
+    job: DBComputeJob,
+    locks: any[],
+    currentTimestamp: bigint
+  ): Promise<void> {
+    const payment = job.payment!
+    const escrowAddress = this.escrow.getEscrowContractAddressForChain(payment.chainId)
+    if (!escrowAddress) {
+      CORE_LOGGER.error(`No escrow address for settlement job ${job.jobId}`)
+      return
+    }
+    const lock = locks.find(
+      (candidate) => BigInt(candidate.jobId.toString()) === BigInt(job.jobIdHash)
+    )
+    const expired = Boolean(lock && currentTimestamp > BigInt(lock.expiry.toString()))
+    const settlementKey = create256Hash(
+      `${payment.chainId}:${escrowAddress.toLowerCase()}:${job.jobIdHash}`
+    )
+    let intent = await this.db.getSettlementByKey(settlementKey)
+    const decision = intent
+      ? {
+          decision: intent.decision,
+          amount: intent.amount,
+          reason: intent.reason
+        }
+      : await this.calculateSettlementDecision(job, expired)
+    let preparedBlock = intent?.preparedBlock
+    if (!intent) {
+      let preparedTransaction: {
+        transactionHash: string
+        rawTransaction: string
+      } | null = null
+      if (lock) {
+        preparedBlock = await this.escrow.getCurrentBlockNumber(payment.chainId)
+        const proof = JSON.stringify(omitDBComputeFieldsFromComputeJob(job))
+        preparedTransaction = expired
+          ? await this.escrow.prepareCancelExpiredLock(
+              payment.chainId,
+              job.jobId,
+              payment.token,
+              job.owner
+            )
+          : await this.escrow.prepareClaimLock(
+              payment.chainId,
+              job.jobId,
+              payment.token,
+              job.owner,
+              decision.amount,
+              proof
+            )
+        if (!preparedTransaction) {
+          CORE_LOGGER.warn(`Could not prepare settlement for job ${job.jobId}`)
+          return
+        }
+      } else {
+        if (!payment.lockTx) {
+          CORE_LOGGER.warn(`Missing lock transaction for settlement job ${job.jobId}`)
+          return
+        }
+        const lockReceipt = await this.escrow.getSettlementTransactionReceipt(
+          payment.chainId,
+          payment.lockTx
+        )
+        if (!lockReceipt.confirmed || lockReceipt.blockNumber === undefined) {
+          CORE_LOGGER.warn(`Cannot establish settlement event range for job ${job.jobId}`)
+          return
+        }
+        preparedBlock = lockReceipt.blockNumber
+      }
+      const now = Date.now()
+      const expected: DBSettlementIntent = {
+        settlementKey,
+        jobId: job.jobId,
+        jobIdHash: job.jobIdHash,
+        chainId: payment.chainId,
+        escrowAddress,
+        token: payment.token,
+        payer: job.owner,
+        decision: decision.decision,
+        amount: decision.amount,
+        reason: decision.reason,
+        preparedBlock,
+        status: 'prepared',
+        transactionHash: preparedTransaction?.transactionHash,
+        rawTransaction: preparedTransaction?.rawTransaction,
+        createdAt: now,
+        updatedAt: now
+      }
+      await this.db.insertSettlementIntent(expected)
+      intent = await this.db.getSettlementByKey(settlementKey)
+      if (!intent || !sameSettlementIntent(intent, expected)) {
+        throw new Error(`Conflicting settlement intent for job ${job.jobId}`)
+      }
+    }
+
+    if (
+      ['charged', 'not_charged', 'refunded', 'refund_required'].includes(intent.status)
+    ) {
+      await this.finishJobFromSettlement(job, intent)
+      return
+    }
+
+    if (intent.transactionHash) {
+      const receipt = await this.escrow.getSettlementTransactionReceipt(
+        intent.chainId,
+        intent.transactionHash
+      )
+      if (receipt.confirmed) {
+        if (!receipt.success) {
+          await this.db.updateSettlementStatus(intent.settlementKey, 'refund_required')
+          intent.status = 'refund_required'
+          await this.finishJobFromSettlement(job, intent)
+          return
+        }
+        if (!(await this.reconcileSettlementEvent(job, intent))) {
+          await this.db.updateSettlementStatus(intent.settlementKey, 'refund_required')
+          intent.status = 'refund_required'
+          await this.finishJobFromSettlement(job, intent)
+        }
+        return
+      }
+    }
+
+    if (!lock) {
+      if (!(await this.reconcileSettlementEvent(job, intent))) {
+        await this.db.updateSettlementStatus(intent.settlementKey, 'unknown')
+      }
+      return
+    }
+
+    if (
+      intent.status === 'unknown' ||
+      !intent.transactionHash ||
+      !intent.rawTransaction
+    ) {
+      await this.db.updateSettlementStatus(intent.settlementKey, 'unknown')
+      return
+    }
+    const transactionHash = await this.escrow.broadcastSettlementTransaction(
+      payment.chainId,
+      intent.rawTransaction,
+      intent.transactionHash
+    )
+    await this.db.updateSettlementStatus(
+      intent.settlementKey,
+      'broadcast',
+      transactionHash
+    )
+    CORE_LOGGER.info(`Broadcast settlement for job ${job.jobId}: ${transactionHash}`)
+  }
+
+  private async reconcileSettlementEvent(
+    job: DBComputeJob,
+    intent: DBSettlementIntent
+  ): Promise<boolean> {
+    const event = await this.escrow.findSettlementEvent(
+      intent.chainId,
+      intent.preparedBlock,
+      intent.jobIdHash,
+      intent.token,
+      intent.payer,
+      this.getKeyManager().getEthAddress()
+    )
+    if (!event) return false
+
+    let status: DBSettlementStatus
+    if (event.mutation === 'cancel') {
+      status = 'refunded'
+    } else if (event.decision === 'release' && intent.decision === 'release') {
+      status = 'not_charged'
+    } else if (
+      intent.decision !== 'charge' ||
+      Math.abs(event.amount - intent.amount) > 1e-12
+    ) {
+      status = 'refund_required'
+    } else {
+      status = 'charged'
+    }
+    await this.db.updateSettlementStatus(
+      intent.settlementKey,
+      status,
+      event.transactionHash,
+      event.blockNumber,
+      event.amount
+    )
+    intent.status = status
+    intent.transactionHash = event.transactionHash
+    intent.receiptBlock = event.blockNumber
+    if (job.payment) {
+      if (event.mutation === 'cancel') job.payment.cancelTx = event.transactionHash
+      else job.payment.claimTx = event.transactionHash
+      job.payment.cost = event.decision === 'charge' ? event.amount : 0
+    }
+    await this.finishJobFromSettlement(job, intent)
+    return true
+  }
+
+  private async finishJobFromSettlement(
+    job: DBComputeJob,
+    intent: DBSettlementIntent
+  ): Promise<void> {
+    if (job.payment) {
+      if (intent.status === 'charged') job.payment.cost = intent.amount
+      else if (intent.status !== 'refund_required') job.payment.cost = 0
+      if (
+        intent.status !== 'refund_required' &&
+        intent.transactionHash &&
+        !job.payment.claimTx &&
+        !job.payment.cancelTx
+      ) {
+        if (intent.status === 'refunded') {
+          job.payment.cancelTx = intent.transactionHash
+        } else {
+          job.payment.claimTx = intent.transactionHash
+        }
+      }
+    }
+    job.status = C2DStatusNumber.JobFinished
+    job.statusText = C2DStatusText.JobFinished
+    await this.db.updateJob(job)
+  }
+
+  private async cleanUpUnknownLocks(
+    chain: string,
+    currentTimestamp: bigint,
+    knownJobHashes: Set<string> = new Set()
+  ) {
     try {
       const nodeAddress = this.getKeyManager().getEthAddress()
       const jobIds: any[] = []
@@ -958,6 +981,7 @@ export class C2DEngineDocker extends C2DEngine {
         return
       }
       for (const lock of balocks) {
+        if (knownJobHashes.has(BigInt(lock.jobId.toString()).toString())) continue
         const lockExpiry = BigInt(lock.expiry.toString())
         if (currentTimestamp > lockExpiry) {
           jobIds.push(lock.jobId.toString())
@@ -1508,6 +1532,9 @@ export class C2DEngineDocker extends C2DEngine {
     const statusResults = []
     for (const job of jobs) {
       const res: ComputeJob = omitDBComputeFieldsFromComputeJob(job)
+      if (typeof this.db.getSettlementByJobId === 'function') {
+        res.settlement = projectSettlement(await this.db.getSettlementByJobId(job.jobId))
+      }
       // add results for algoLogs
       res.results = await this.getResults(job.jobId)
       statusResults.push(res)
@@ -2205,6 +2232,10 @@ export class C2DEngineDocker extends C2DEngine {
               path: '/data/outputs/result.json'
             })) as unknown as Readable,
             resultPolicy.maxBytes
+          )
+          job.resultValidation = validateConsumerResultContract(
+            singleJsonResult,
+            resultPolicy
           )
         } catch (e) {
           CORE_LOGGER.error('Failed to validate result.json: ' + e.message)

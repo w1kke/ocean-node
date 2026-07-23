@@ -11,6 +11,7 @@ import {
   ComputeJob,
   ComputeResourceRequest,
   DBComputeJob,
+  DBSettlementIntent,
   RunningPlatform
 } from '../../@types/C2D/C2D.js'
 // import { computeAsset } from '../data/assets'
@@ -216,6 +217,43 @@ describe('Compute Jobs Database', () => {
     expect(updatedJob.status).to.be.equal(C2DStatusNumber.PullImage)
     expect(updatedJob.isRunning).to.be.equal(true)
     expect(updatedJob.statusText).to.be.equal(C2DStatusText.PullImage)
+  })
+
+  it('persists one immutable settlement intent and mutable confirmation state', async () => {
+    const now = Date.now()
+    const intent: DBSettlementIntent = {
+      settlementKey: `settlement-${jobId}`,
+      jobId,
+      jobIdHash: '1',
+      chainId: 8996,
+      escrowAddress: '0x1111111111111111111111111111111111111111',
+      token: '0x2222222222222222222222222222222222222222',
+      payer: '0x3333333333333333333333333333333333333333',
+      decision: 'charge',
+      amount: 0.25,
+      reason: 'validated_result',
+      preparedBlock: 100,
+      status: 'prepared',
+      transactionHash: `0x${'a'.repeat(64)}`,
+      rawTransaction: '0x1234',
+      createdAt: now,
+      updatedAt: now
+    }
+    expect(await db.insertSettlementIntent(intent)).to.equal(true)
+    expect(await db.insertSettlementIntent({ ...intent, amount: 9 })).to.equal(false)
+    expect((await db.getSettlementByJobId(jobId))?.amount).to.equal(0.25)
+
+    const tx = intent.transactionHash
+    expect(
+      await db.updateSettlementStatus(intent.settlementKey, 'charged', tx, 101, 0.25)
+    ).to.equal(true)
+    const confirmed = await db.getSettlementByKey(intent.settlementKey)
+    expect(confirmed?.status).to.equal('charged')
+    expect(confirmed?.transactionHash).to.equal(tx)
+    expect(confirmed?.receiptBlock).to.equal(101)
+    expect(confirmed?.amount).to.equal(0.25)
+    expect(confirmed?.settledAmount).to.equal(0.25)
+    expect(confirmed?.rawTransaction).to.equal('0x1234')
   })
 
   it('should get running jobs', async () => {

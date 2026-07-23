@@ -209,11 +209,11 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
 - **scanImages**: Whether Docker images should be scanned for vulnerabilities using Trivy. Disabled scanning does not pull or run Trivy.
 - **scanImageRejectSeverities**: Required and non-empty when `scanImages` is true. The same severity list is passed to Trivy and used to reject the image. Scanner or report failures reject the job as `ImageScanFailed`.
 - **scanImageDBUpdateInterval**: How often to update the vulnerability database, in seconds. Default: 43200 (12 hours)
-- **consumerResultPolicy**: Required per environment. Use `{ "mode": "archive" }` only for intentional legacy output, or `{ "mode": "singleJson", "maxBytes": 262144 }` to release exactly one bounded `result.json`.
+- **consumerResultPolicy**: Required per environment. Use `{ "mode": "archive" }` only for intentional legacy output, or `{ "mode": "singleJson", "maxBytes": 262144 }` to release exactly one bounded `result.json`. Private Brainstem environments must also set `"resultContract": "brainstem.c2d-result/v1"`; only a contract-valid `complete` or `insufficient_data` result is billable.
 - **enableNetwork**: Whether networking is enabled for algorithm containers. Default: false
 - **imageRetentionDays** - how long docker images are kept, in days. Default: 7
 - **imageCleanupInterval** - how often to run cleanup for docker images, in seconds. Min: 3600 (1hour), Default: 86400 (24 hours)
-- **paymentClaimInterval** - how often to run payment claiming, in seconds. Default: 3600 (1 hour)
+- **paymentClaimInterval** - how often to reconcile persisted settlement intents and confirmed escrow events, in seconds. Default: 3600 (1 hour). Technical failures close a live lock with zero charge; an unconfirmed or unexplained transaction remains `unknown`.
 - **enableBenchmark** - when set to `true`, the node will auto-create a benchmark compute environment at startup using the system's available resources (CPU, RAM, disk, GPUs). Default: `false`
 - **storageExpiry**: Amount of seconds for storage expiry.(Mandatory)
 - **maxJobDuration**: Maximum duration in seconds for a job.(Mandatory)

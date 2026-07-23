@@ -111,7 +111,11 @@ export interface ComputeEnvironmentFreeOptions {
 }
 export type ConsumerResultPolicy =
   | { mode: 'archive' }
-  | { mode: 'singleJson'; maxBytes: number }
+  | {
+      mode: 'singleJson'
+      maxBytes: number
+      resultContract?: 'brainstem.c2d-result/v1'
+    }
 
 export interface PrivateDatasetPolicy {
   url: string
@@ -211,6 +215,22 @@ export interface ComputeJobTerminationDetails {
   OOMKilled: boolean
   exitCode: number
 }
+
+export type ComputeSettlementStatus =
+  | 'not_charged'
+  | 'charged'
+  | 'refunded'
+  | 'refund_required'
+  | 'unknown'
+
+export interface ComputeSettlement {
+  status: ComputeSettlementStatus
+  amount: number
+  chainId?: number
+  token?: string
+  transactionHash?: string
+}
+
 export interface ComputeJob {
   owner: string
   did?: string
@@ -227,6 +247,7 @@ export interface ComputeJob {
   environment?: string
   metadata?: DBComputeJobMetadata
   terminationDetails?: ComputeJobTerminationDetails
+  settlement?: ComputeSettlement
   queueMaxWaitTime: number // max time in seconds a job can wait in the queue before being started
 }
 
@@ -285,6 +306,43 @@ export interface DBComputeJobPayment {
   cost: number
 }
 
+export interface DBComputeResultValidation {
+  contract: 'brainstem.c2d-result/v1'
+  status: 'complete' | 'insufficient_data' | 'failed'
+  billable: boolean
+}
+
+export type DBSettlementDecision = 'charge' | 'release'
+export type DBSettlementStatus =
+  | 'prepared'
+  | 'broadcast'
+  | 'charged'
+  | 'not_charged'
+  | 'refunded'
+  | 'refund_required'
+  | 'unknown'
+
+export interface DBSettlementIntent {
+  settlementKey: string
+  jobId: string
+  jobIdHash: string
+  chainId: number
+  escrowAddress: string
+  token: string
+  payer: string
+  decision: DBSettlementDecision
+  amount: number
+  reason: string
+  preparedBlock: number
+  status: DBSettlementStatus
+  transactionHash?: string
+  rawTransaction?: string
+  settledAmount?: number
+  receiptBlock?: number
+  createdAt: number
+  updatedAt: number
+}
+
 // this is the internal structure
 export interface DBComputeJob extends ComputeJob {
   clusterHash: string
@@ -303,6 +361,7 @@ export interface DBComputeJob extends ComputeJob {
   algoStopTimestamp: string
   resources: ComputeResourceRequestWithPrice[]
   payment?: DBComputeJobPayment
+  resultValidation?: DBComputeResultValidation
   metadata?: DBComputeJobMetadata
   additionalViewers?: string[] // addresses of additional addresses that can get results
   algoDuration: number // duration of the job in seconds

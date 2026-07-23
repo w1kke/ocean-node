@@ -220,6 +220,7 @@ Compute-to-Data jobs can upload their policy-approved result to a remote backend
 3. When the job finishes, Ocean Node applies the compute environment's required `consumerResultPolicy` before publication:
    - `archive` uploads or stores `outputs.tar` for intentional legacy workloads;
    - `singleJson` validates and uploads or stores only bounded `result.json`;
+   - when `resultContract` is `brainstem.c2d-result/v1`, the complete structured contract is validated before the result can be published or billed;
    - policy validation failure never falls back to the broader archive mode.
 
 ### `ComputeOutput` shape
@@ -249,6 +250,17 @@ Notes:
 - `output` itself is **not plain JSON** in the compute request; it must be an ECIES-encrypted string.
 - `encryption.key` must be at least 32 bytes (64 hex chars).
 - `encryption.encryptMethod` must be `AES` if provided.
+
+### Paid-job settlement journal
+
+Paid terminal jobs use the local SQLite `c2d_settlements` journal. The node
+persists one immutable decision and a signed transaction hash before broadcast.
+If the process stops after broadcast, it can only rebroadcast those same signed
+bytes; it cannot create a second settlement attempt accidentally. A job becomes
+`charged`, `not_charged`, or `refunded` only after a matching escrow event is
+confirmed. Failed receipts or mismatched events become `refund_required`, while
+missing evidence remains `unknown`. The API never exposes the stored signed raw
+transaction.
 
 ### End-to-end example
 

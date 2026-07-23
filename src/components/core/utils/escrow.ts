@@ -13,6 +13,11 @@ import { CORE_LOGGER } from '../../../utils/logging/common.js'
 const DECIMALS_CACHE_KEY = (chainId: number, token: string) =>
   `${chainId}:${token.toLowerCase()}`
 
+export interface PreparedSettlementTransaction {
+  transactionHash: string
+  rawTransaction: string
+}
+
 export class Escrow {
   private networks: RPCS
   private claimDurationTimeout: number
@@ -83,6 +88,78 @@ export class Escrow {
   async getNumberFromWei(wei: string, chain: number, token: string) {
     const decimals = await this.getDecimals(chain, token)
     return parseFloat(formatUnits(wei, decimals))
+  }
+
+  async getCurrentBlockNumber(chain: number): Promise<number> {
+    return await (await this.getBlockchain(chain).getProvider()).getBlockNumber()
+  }
+
+  async getSettlementTransactionReceipt(
+    chain: number,
+    transactionHash: string
+  ): Promise<{ confirmed: boolean; success: boolean; blockNumber?: number }> {
+    const receipt = await (
+      await this.getBlockchain(chain).getProvider()
+    ).getTransactionReceipt(transactionHash)
+    if (!receipt) return { confirmed: false, success: false }
+    return {
+      confirmed: true,
+      success: receipt.status === 1,
+      blockNumber: receipt.blockNumber
+    }
+  }
+
+  async findSettlementEvent(
+    chain: number,
+    fromBlock: number,
+    jobIdHash: string,
+    token: string,
+    payer: string,
+    payee: string
+  ): Promise<{
+    decision: 'charge' | 'release'
+    mutation: 'claim' | 'cancel'
+    amount: number
+    transactionHash: string
+    blockNumber: number
+  } | null> {
+    const blockchain = this.getBlockchain(chain)
+    const signer = await blockchain.getSigner()
+    const contract = this.getContract(chain, signer)
+    if (!contract) throw new Error('Failed to initialize escrow contract')
+
+    const expectedJobId = BigInt(jobIdHash)
+    const expectedToken = token.toLowerCase()
+    const events = [
+      ...(await contract.queryFilter(
+        contract.filters.Claimed(payee, null, null, payer),
+        fromBlock
+      )),
+      ...(await contract.queryFilter(
+        contract.filters.Canceled(payee, null, null, payer),
+        fromBlock
+      ))
+    ]
+    for (const event of events) {
+      if (!('args' in event) || !event.args) continue
+      const settlementEvent = event as any
+      if (BigInt(settlementEvent.args.jobId.toString()) !== expectedJobId) continue
+      if (String(settlementEvent.args.token).toLowerCase() !== expectedToken) continue
+      const amount = await this.getNumberFromWei(
+        settlementEvent.args.amount.toString(),
+        chain,
+        token
+      )
+      return {
+        decision:
+          settlementEvent.eventName === 'Claimed' && amount > 0 ? 'charge' : 'release',
+        mutation: settlementEvent.eventName === 'Claimed' ? 'claim' : 'cancel',
+        amount,
+        transactionHash: settlementEvent.transactionHash,
+        blockNumber: settlementEvent.blockNumber
+      }
+    }
+    return null
   }
 
   // eslint-disable-next-line require-await
@@ -260,6 +337,50 @@ export class Escrow {
     }
   }
 
+  async prepareClaimLock(
+    chain: number,
+    job: string,
+    token: string,
+    payer: string,
+    amount: number,
+    proof: string
+  ): Promise<PreparedSettlementTransaction | null> {
+    const blockchain = this.getBlockchain(chain)
+    const signer = await blockchain.getSigner()
+    const contract = this.getContract(chain, signer)
+    if (!contract) return null
+    const jobId = create256Hash(job)
+    const locks = await this.getLocks(chain, token, payer, await signer.getAddress())
+    if (!locks?.some((lock) => BigInt(lock.jobId.toString()) === BigInt(jobId))) {
+      return null
+    }
+    const wei = await this.getPaymentAmountInWei(amount, chain, token)
+    const encodedProof = ethers.toUtf8Bytes(proof)
+    const gas = await contract.claimLockAndWithdraw.estimateGas(
+      jobId,
+      token,
+      payer,
+      wei,
+      encodedProof
+    )
+    const gasOptions = await blockchain.getGasOptions(gas, 1.2)
+    const transaction = await contract.claimLockAndWithdraw.populateTransaction(
+      jobId,
+      token,
+      payer,
+      wei,
+      encodedProof,
+      gasOptions
+    )
+    const rawTransaction = await signer.signTransaction(
+      await signer.populateTransaction(transaction)
+    )
+    return {
+      transactionHash: ethers.keccak256(rawTransaction),
+      rawTransaction
+    }
+  }
+
   async cancelExpiredLock(
     chain: number,
     job: string,
@@ -298,6 +419,62 @@ export class Escrow {
     } catch (e) {
       CORE_LOGGER.error('Failed to cancel expired locks: ' + e.message)
       throw new Error(String(e.message))
+    }
+  }
+
+  async prepareCancelExpiredLock(
+    chain: number,
+    job: string,
+    token: string,
+    payer: string
+  ): Promise<PreparedSettlementTransaction | null> {
+    const blockchain = this.getBlockchain(chain)
+    const signer = await blockchain.getSigner()
+    const contract = this.getContract(chain, signer)
+    if (!contract) return null
+    const jobId = create256Hash(job)
+    const payee = await signer.getAddress()
+    const locks = await this.getLocks(chain, token, payer, payee)
+    if (!locks?.some((lock) => BigInt(lock.jobId.toString()) === BigInt(jobId))) {
+      return null
+    }
+    const gas = await contract.cancelExpiredLock.estimateGas(jobId, token, payer, payee)
+    const gasOptions = await blockchain.getGasOptions(gas, 1.2)
+    const transaction = await contract.cancelExpiredLock.populateTransaction(
+      jobId,
+      token,
+      payer,
+      payee,
+      gasOptions
+    )
+    const rawTransaction = await signer.signTransaction(
+      await signer.populateTransaction(transaction)
+    )
+    return {
+      transactionHash: ethers.keccak256(rawTransaction),
+      rawTransaction
+    }
+  }
+
+  async broadcastSettlementTransaction(
+    chain: number,
+    rawTransaction: string,
+    expectedHash: string
+  ): Promise<string> {
+    if (ethers.keccak256(rawTransaction).toLowerCase() !== expectedHash.toLowerCase()) {
+      throw new Error('Prepared settlement transaction hash mismatch')
+    }
+    const provider = await this.getBlockchain(chain).getProvider()
+    try {
+      const transaction = await provider.broadcastTransaction(rawTransaction)
+      if (transaction.hash.toLowerCase() !== expectedHash.toLowerCase()) {
+        throw new Error('Broadcast settlement transaction hash mismatch')
+      }
+      return transaction.hash
+    } catch (error) {
+      const known = await provider.getTransaction(expectedHash)
+      if (known) return expectedHash
+      throw error
     }
   }
 
