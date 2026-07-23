@@ -278,7 +278,10 @@ export class OceanP2P extends EventEmitter {
       const maddr = multiaddr(addr)
 
       const protos = maddr.getComponents()
-      const addressString = maddr.nodeAddress().address
+      const addressString = protos.find((entry) =>
+        ['dns', 'dns4', 'dns6', 'dnsaddr', 'ip4', 'ip6'].includes(entry.name)
+      )?.value
+      if (!addressString) return false
       if (
         protos.some(
           (entry) =>
@@ -768,7 +771,7 @@ export class OceanP2P extends EventEmitter {
     message: string,
     options: { signal: AbortSignal },
     requestBody?: P2PRequestBodyStream
-  ) {
+  ): Promise<{ status: any; stream: AsyncIterable<any> }> {
     let outbound = message
     if (requestBody) {
       const cmd = JSON.parse(message) as Record<string, unknown>

@@ -118,7 +118,9 @@ describe('Schema validation tests', () => {
     expect(signatureResult.hash).to.equal(
       '0xa291d25eb3dd0c8487dc2d55baa629184e7b668ed1c579198a434eca9c663ac4'
     )
-    expect(signatureResult.publicKey).to.equal('0xe2DD09d719Da89e5a3D0F2549c7E24566e947260')
+    expect(signatureResult.publicKey).to.equal(
+      '0xe2DD09d719Da89e5a3D0F2549c7E24566e947260'
+    )
 
     const signature = Signature.from({
       r: signatureResult.r,

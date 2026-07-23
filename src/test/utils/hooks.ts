@@ -50,16 +50,14 @@ function getEnvOverrides(): OverrideEnvConfig[] {
 }
 
 export const mochaHooks = {
-  beforeAll() {
+  async beforeAll() {
     // get stuff we want to override
     envOverrides = getEnvOverrides()
 
     // if it exists will use it, otherwise nothing happens
     // in any case it WILL NOT override the existing configuration
     // it returns the original object with the original value preserved to be restored later
-    setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides).then((overrides) => {
-      envOverrides = overrides
-    })
+    envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
     initialSetupDone = true
     CONFIG_LOGGER.debug(
       `(Hook) Initial test setup: ${JSON.stringify(envOverrides, null, 4)} `
@@ -69,9 +67,9 @@ export const mochaHooks = {
     this.timeout(DEFAULT_TEST_TIMEOUT)
   },
 
-  afterAll() {
+  async afterAll() {
     // restore stuff
-    tearDownEnvironment(envOverrides)
+    await tearDownEnvironment(envOverrides)
     // double check any other possible changes,
     // get the final configuration and compare both
     // restore any value that could have been modified

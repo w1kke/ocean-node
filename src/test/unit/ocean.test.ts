@@ -17,35 +17,40 @@ import {
 } from '../utils/utils.js'
 
 let envOverrides: OverrideEnvConfig[]
+let config: Awaited<ReturnType<typeof getConfiguration>>
+let db: Database
+let oceanIndexer: OceanIndexer
+let oceanNode: OceanNode
 
-describe('Status command tests', async () => {
-  // need to do it first
-  envOverrides = buildEnvOverrideConfig(
-    [
-      ENVIRONMENT_VARIABLES.PRIVATE_KEY,
-      ENVIRONMENT_VARIABLES.IPFS_GATEWAY,
-      ENVIRONMENT_VARIABLES.ARWEAVE_GATEWAY,
-      ENVIRONMENT_VARIABLES.RPCS,
-      ENVIRONMENT_VARIABLES.INDEXER_NETWORKS
-    ],
-    [
-      '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
-      'https://ipfs.io/',
-      'https://arweave.net/',
-      '{ "1": "https://rpc.eth.gateway.fm", "137": "https://polygon.meowrpc.com" }',
-      JSON.stringify([1, 137])
-    ]
-  )
-  envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
-  // because of this
-  const config = await getConfiguration(true)
-  const db = await Database.init(config.dbConfig)
-  const keyManager = new KeyManager(config)
-  const blockchainRegistry = new BlockchainRegistry(keyManager, config)
-  const oceanP2P = new OceanP2P(config, keyManager, db)
-  const oceanIndexer = new OceanIndexer(db, config, blockchainRegistry)
-  const oceanProvider = new OceanProvider(db)
-  const oceanNode = OceanNode.getInstance(config, db, oceanP2P)
+describe('Status command tests', () => {
+  before(async () => {
+    envOverrides = buildEnvOverrideConfig(
+      [
+        ENVIRONMENT_VARIABLES.PRIVATE_KEY,
+        ENVIRONMENT_VARIABLES.IPFS_GATEWAY,
+        ENVIRONMENT_VARIABLES.ARWEAVE_GATEWAY,
+        ENVIRONMENT_VARIABLES.RPCS,
+        ENVIRONMENT_VARIABLES.INDEXER_NETWORKS
+      ],
+      [
+        '0xc594c6e5def4bab63ac29eed19a134c130388f74f019bc74b8f4389df2837a58',
+        'https://ipfs.io/',
+        'https://arweave.net/',
+        '{ "1": "https://rpc.eth.gateway.fm", "137": "https://polygon.meowrpc.com" }',
+        JSON.stringify([1, 137])
+      ]
+    )
+    envOverrides = await setupEnvironment(TEST_ENV_CONFIG_FILE, envOverrides)
+    config = await getConfiguration(true)
+    db = await Database.init(config.dbConfig)
+    const keyManager = new KeyManager(config)
+    const blockchainRegistry = new BlockchainRegistry(keyManager, config)
+    const oceanP2P = new OceanP2P(config, keyManager, db)
+    oceanIndexer = new OceanIndexer(db, config, blockchainRegistry)
+    const oceanProvider = new OceanProvider(db)
+    oceanNode = OceanNode.getInstance(config, db, oceanP2P)
+    oceanNode.addProvider(oceanProvider)
+  })
 
   after(async () => {
     // Restore original local setup / env variables after test
@@ -73,7 +78,6 @@ describe('Status command tests', async () => {
     expect(oceanNode.getIndexer().getDatabase()).to.eql(db)
   })
   it('Ocean Provider should be initialized correctly', () => {
-    oceanNode.addProvider(oceanProvider)
     expect(oceanNode.getProvider().getDatabase()).to.eql(db)
   })
 })
