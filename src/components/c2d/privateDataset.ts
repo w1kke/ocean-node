@@ -22,13 +22,17 @@ export class PrivateDatasetError extends Error {
 export function assertPrivateDatasetJob(
   policy: PrivateDatasetPolicy,
   image: string,
-  assetCount: number
+  assetCount: number,
+  hasRemoteOutput: boolean = false
 ): void {
   if (image !== policy.approvedAlgorithmImage) {
     throw new PrivateDatasetError('private_dataset_algorithm_not_approved')
   }
   if (assetCount !== 1) {
     throw new PrivateDatasetError('private_dataset_requires_one_asset')
+  }
+  if (hasRemoteOutput) {
+    throw new PrivateDatasetError('private_dataset_remote_output_not_allowed')
   }
 }
 

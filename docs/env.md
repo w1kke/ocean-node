@@ -215,7 +215,7 @@ The `DOCKER_COMPUTE_ENVIRONMENTS` environment variable should be a JSON array of
 - **imageCleanupInterval** - how often to run cleanup for docker images, in seconds. Min: 3600 (1hour), Default: 86400 (24 hours)
 - **paymentClaimInterval** - how often to reconcile persisted settlement intents and confirmed escrow events, in seconds. Default: 3600 (1 hour). Technical failures close a live lock with zero charge; an unconfirmed or unexplained transaction remains `unknown`.
 - **enableBenchmark** - when set to `true`, the node will auto-create a benchmark compute environment at startup using the system's available resources (CPU, RAM, disk, GPUs). Default: `false`
-- **storageExpiry**: Amount of seconds for storage expiry.(Mandatory)
+- **storageExpiry**: Amount of seconds for storage expiry. Mandatory. Private dataset environments require exactly `1209600` seconds (14 days); their validated aggregate is wallet-authorized until that boundary, while raw inputs, job workspaces, logs, and private configuration are removed as soon as the job becomes terminal.
 - **maxJobDuration**: Maximum duration in seconds for a job.(Mandatory)
 - **minJobDuration**: Minimum duration in seconds for a job.(Mandatory)
 - **access**: Access control configuration for paid compute jobs. If both `addresses` and `accessLists` are empty, all addresses are allowed.

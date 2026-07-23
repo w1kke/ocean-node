@@ -195,5 +195,9 @@ describe('Private dataset provisioning', () => {
       PrivateDatasetError,
       'private_dataset_requires_one_asset'
     )
+    expect(() => assertPrivateDatasetJob(policy, IMAGE, 1, true)).to.throw(
+      PrivateDatasetError,
+      'private_dataset_remote_output_not_allowed'
+    )
   })
 })

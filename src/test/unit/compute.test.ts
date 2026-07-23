@@ -219,6 +219,33 @@ describe('Compute Jobs Database', () => {
     expect(updatedJob.statusText).to.be.equal(C2DStatusText.PullImage)
   })
 
+  it('removes private linkage columns when a retained job is sanitized', async () => {
+    const [job] = await db.getJob(jobId)
+    job.did = 'did:ope:private'
+    job.inputDID = ['did:ope:private-input']
+    job.algoDID = 'did:ope:private-algorithm'
+    job.agreementId = '0xprivate-agreement'
+    await db.updateJob(job)
+
+    delete job.did
+    delete job.inputDID
+    delete job.algoDID
+    delete job.agreementId
+    job.privateResultRetention = {
+      cleanupState: 'complete',
+      algorithmImageDigest: `sha256:${'a'.repeat(64)}`,
+      expiresAt: Math.floor(Date.now() / 1000) + 14 * 24 * 60 * 60
+    }
+    expect(await db.updateJob(job)).to.equal(1)
+
+    const [sanitized] = await db.getJob(jobId)
+    expect(sanitized.did).to.equal(null)
+    expect(sanitized.inputDID).to.equal(null)
+    expect(sanitized.algoDID).to.equal(null)
+    expect(sanitized.agreementId).to.equal(null)
+    expect(sanitized.privateResultRetention).to.deep.equal(job.privateResultRetention)
+  })
+
   it('persists one immutable settlement intent and mutable confirmation state', async () => {
     const now = Date.now()
     const intent: DBSettlementIntent = {

@@ -223,6 +223,8 @@ Compute-to-Data jobs can upload their policy-approved result to a remote backend
    - when `resultContract` is `brainstem.c2d-result/v1`, the complete structured contract is validated before the result can be published or billed;
    - policy validation failure never falls back to the broader archive mode.
 
+Private dataset environments do not permit remote output configuration. The node is the sole result owner: it moves only the validated aggregate into a restricted, checksum-verified retention directory, authorizes reads against the job owner or explicit viewers, and stops serving it at the exact 14-day boundary. Raw inputs, DDOs, archives, algorithm logs, and private job configuration are removed at terminal cleanup. A failed filesystem, Docker-volume, or database cleanup remains fail-closed and observable for restart recovery.
+
 ### `ComputeOutput` shape
 
 ```json

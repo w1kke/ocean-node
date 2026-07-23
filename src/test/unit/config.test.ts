@@ -129,6 +129,7 @@ describe('Should require an explicit consumer result policy', () => {
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
         consumerResultPolicy: {
           mode: 'singleJson',
           maxBytes: 262144,
@@ -156,6 +157,18 @@ describe('Should require an explicit consumer result policy', () => {
       privateDataset
     )
     expect(withPolicy).not.to.equal(withoutPolicy)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 7 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset
+      }).success
+    ).to.equal(false)
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,

@@ -313,6 +313,19 @@ export interface DBComputeResultValidation {
   billable: boolean
 }
 
+export type DBPrivateResultCleanupState = 'pending' | 'complete' | 'failed'
+
+export interface DBPrivateResultRetention {
+  cleanupState: DBPrivateResultCleanupState
+  inputChecksum?: string
+  resultChecksum?: string
+  algorithmImageDigest: string
+  retainedAt?: number
+  expiresAt: number
+  resultDeletedAt?: number
+  cleanupErrorCode?: 'private_cleanup_failed'
+}
+
 export type DBSettlementDecision = 'charge' | 'release'
 export type DBSettlementStatus =
   | 'prepared'
@@ -363,6 +376,8 @@ export interface DBComputeJob extends ComputeJob {
   resources: ComputeResourceRequestWithPrice[]
   payment?: DBComputeJobPayment
   resultValidation?: DBComputeResultValidation
+  privateResultRetention?: DBPrivateResultRetention
+  privateInputChecksum?: string
   metadata?: DBComputeJobMetadata
   additionalViewers?: string[] // addresses of additional addresses that can get results
   algoDuration: number // duration of the job in seconds

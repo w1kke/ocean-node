@@ -15,6 +15,18 @@ import { AbstractDatabase } from './BaseDatabase.js'
 import { OceanNode } from '../../OceanNode.js'
 
 import { generateUniqueID } from '../core/compute/utils.js'
+
+export function isStorageExpired(
+  job: DBComputeJob,
+  storageExpiry: number,
+  currentTimestamp: number
+): boolean {
+  if (job.privateResultRetention) {
+    return currentTimestamp >= job.privateResultRetention.expiresAt
+  }
+  return storageExpiry <= currentTimestamp - parseInt(job.dateFinished)
+}
+
 export class C2DDatabase extends AbstractDatabase {
   private provider: SQLiteCompute
 
@@ -171,11 +183,12 @@ export class C2DDatabase extends AbstractDatabase {
           computeEnvironment.id
         ])
         for (const job of finishedOrExpired) {
-          if (
-            computeEnvironment &&
-            computeEnvironment.storageExpiry <
-              currentTimestamp - parseInt(job.dateFinished)
-          ) {
+          const expired = isStorageExpired(
+            job,
+            computeEnvironment.storageExpiry,
+            currentTimestamp
+          )
+          if (computeEnvironment && expired) {
             if (await engine.cleanupExpiredStorage(job)) {
               cleaned++
             }
@@ -184,7 +197,7 @@ export class C2DDatabase extends AbstractDatabase {
       }
     }
     // now let's clean jobs that have an unknown envs (not in our envs)
-    cleaned += await this.cleanOrphanJobs(allEnvironments)
+    cleaned += await this.cleanOrphanJobs(allEnvironments, allEngines)
     return cleaned
   }
 
@@ -193,7 +206,7 @@ export class C2DDatabase extends AbstractDatabase {
    * @param existingEnvironments
    * @returns number of orphans
    */
-  async cleanOrphanJobs(existingEnvironments: ComputeEnvironment[]) {
+  async cleanOrphanJobs(existingEnvironments: ComputeEnvironment[], engines: any[] = []) {
     let cleaned = 0
 
     const envIds: string[] = existingEnvironments
@@ -205,7 +218,16 @@ export class C2DDatabase extends AbstractDatabase {
 
     for (const job of allJobs) {
       if (!job.environment || !envIds.includes(job.environment)) {
-        if (await this.deleteJob(job.jobId)) {
+        const engine = engines.find(
+          (candidate) => candidate.getC2DConfig?.().hash === job.clusterHash
+        )
+        if (!engine) {
+          DATABASE_LOGGER.error(
+            'Cannot clean orphan C2D job storage: owning engine is unavailable'
+          )
+          continue
+        }
+        if (await engine.cleanupExpiredStorage(job)) {
           cleaned++
         }
       }

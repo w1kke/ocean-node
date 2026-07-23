@@ -51,8 +51,10 @@ import {
   statSync,
   statfsSync,
   createReadStream,
-  renameSync
+  renameSync,
+  readFileSync
 } from 'fs'
+import { createHash } from 'crypto'
 import { pipeline } from 'node:stream/promises'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
@@ -90,6 +92,8 @@ const C2D_CONTAINER_GID = 1000
 
 const trivyImage = 'aquasec/trivy:0.69.3' // Use pinned versions for safety
 const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
+export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
+const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
 
 export function createComputeEnvironmentId(
   clusterHash: string,
@@ -502,6 +506,7 @@ export class C2DEngineDocker extends C2DEngine {
 
     // Rebuild CPU allocations from running containers (handles node restart)
     await this.rebuildCpuAllocations()
+    await this.recoverPrivateJobMaterial()
 
     // only now set the timer
     if (!this.cronTimer) {
@@ -1355,7 +1360,7 @@ export class C2DEngineDocker extends C2DEngine {
     }
     const privateDatasetPolicy = this.privateDatasetPolicies.get(env.id)
     if (privateDatasetPolicy) {
-      assertPrivateDatasetJob(privateDatasetPolicy, image, assets.length)
+      assertPrivateDatasetJob(privateDatasetPolicy, image, assets.length, Boolean(output))
     }
     let additionalDockerFiles: { [key: string]: any } = null
     if (
@@ -1501,14 +1506,23 @@ export class C2DEngineDocker extends C2DEngine {
     try {
       const jobs = await this.db.getJob(jobId)
       if (jobs.length !== 1 || jobs[0].output) return res
-      const environment = await this.getJobEnvironment(jobs[0])
-      const policy = environment?.consumerResultPolicy
+      const policy = jobs[0].privateResultRetention
+        ? ({ mode: 'singleJson' } as const)
+        : (await this.getJobEnvironment(jobs[0]))?.consumerResultPolicy
       if (!policy) return res
 
       const filename = policy.mode === 'singleJson' ? 'result.json' : 'outputs.tar'
-      const outputStat = statSync(
-        this.getStoragePath() + '/' + jobId + '/data/outputs/' + filename
-      )
+      if (this.isPrivateResultExpired(jobs[0])) return res
+      const retained = jobs[0].privateResultRetention
+      if (retained && retained.cleanupState !== 'complete') return res
+      const filePath = retained?.resultChecksum
+        ? this.getRetainedPrivateResultPath(jobs[0])
+        : this.getStoragePath() + '/' + jobId + '/data/outputs/' + filename
+      if (retained?.resultChecksum && !this.retainedPrivateResultIsValid(jobs[0])) {
+        CORE_LOGGER.error('Retained private result failed its integrity check')
+        return res
+      }
+      const outputStat = statSync(filePath)
       res.push({
         filename,
         filesize: outputStat.size,
@@ -1573,8 +1587,9 @@ export class C2DEngineDocker extends C2DEngine {
         if (!Number.isSafeInteger(offset) || offset < 0 || offset >= i.filesize) {
           return null
         }
-        const filePath =
-          this.getStoragePath() + '/' + jobId + '/data/outputs/' + i.filename
+        const filePath = jobs[0].privateResultRetention?.resultChecksum
+          ? this.getRetainedPrivateResultPath(jobs[0])
+          : this.getStoragePath() + '/' + jobId + '/data/outputs/' + i.filename
         const contentType =
           i.filename === 'result.json'
             ? 'application/json; charset=utf-8'
@@ -2331,6 +2346,7 @@ export class C2DEngineDocker extends C2DEngine {
           CORE_LOGGER.error('Failed to publish compute result: ' + e.message)
           job.status = C2DStatusNumber.ResultsUploadFailed
           job.statusText = C2DStatusText.ResultsUploadFailed
+          job.resultValidation = undefined
         }
       }
       job.isRunning = false
@@ -2437,7 +2453,181 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
-  private async cleanupJob(job: DBComputeJob) {
+  private isPrivateJob(job: DBComputeJob): boolean {
+    return Boolean(
+      this.privateDatasetPolicies.has(job.environment) ||
+      job.privateResultRetention ||
+      job.privateInputChecksum
+    )
+  }
+
+  private getRetainedPrivateResultDirectory(job: DBComputeJob): string {
+    const jobHash = (job.jobIdHash || create256Hash(job.jobId)).replace(/^0x/, '')
+    return path.join(this.getStoragePath(), PRIVATE_RESULT_DIRECTORY, jobHash)
+  }
+
+  private getRetainedPrivateResultPath(job: DBComputeJob): string {
+    return path.join(this.getRetainedPrivateResultDirectory(job), 'result.json')
+  }
+
+  private isPrivateResultExpired(
+    job: DBComputeJob,
+    nowSeconds: number = Math.floor(Date.now() / 1000)
+  ): boolean {
+    const expiresAt = job.privateResultRetention?.expiresAt
+    return Number.isSafeInteger(expiresAt) && nowSeconds >= expiresAt
+  }
+
+  private retainedPrivateResultIsValid(job: DBComputeJob): boolean {
+    const retention = job.privateResultRetention
+    if (!retention?.resultChecksum || retention.resultDeletedAt) return true
+    const retainedResultPath = this.getRetainedPrivateResultPath(job)
+    if (!existsSync(retainedResultPath)) return false
+    return (
+      createHash('sha256').update(readFileSync(retainedResultPath)).digest('hex') ===
+      retention.resultChecksum
+    )
+  }
+
+  private sanitizePrivateJob(job: DBComputeJob): void {
+    delete job.did
+    delete job.inputDID
+    delete job.algoDID
+    delete job.agreementId
+    job.results = []
+    job.configlogURL = null
+    job.publishlogURL = null
+    job.algologURL = null
+    job.outputsURL = null
+    job.algorithm = {} as ComputeAlgorithm
+    job.assets = []
+    job.containerImage = ''
+    delete job.metadata
+    delete job.terminationDetails
+    delete job.encryptedDockerRegistryAuth
+    delete job.output
+    delete job.privateInputChecksum
+  }
+
+  private async cleanupPrivateJobMaterial(
+    job: DBComputeJob,
+    runtimeCleanupSucceeded: boolean = true
+  ): Promise<boolean> {
+    const finishedAt = Math.floor(Number(job.dateFinished))
+    if (!Number.isSafeInteger(finishedAt) || finishedAt <= 0) {
+      CORE_LOGGER.error('Private result cleanup deferred: invalid finish timestamp')
+      return false
+    }
+
+    const policy = this.privateDatasetPolicies.get(job.environment)
+    const algorithmImageDigest =
+      job.privateResultRetention?.algorithmImageDigest ||
+      policy?.approvedAlgorithmImage.split('@').at(-1)
+    if (!algorithmImageDigest || !/^sha256:[0-9a-f]{64}$/.test(algorithmImageDigest)) {
+      CORE_LOGGER.error('Private result cleanup deferred: algorithm digest unavailable')
+      return false
+    }
+
+    const originalJobDirectory = path.join(this.getStoragePath(), job.jobId)
+    const originalResultPath = path.join(
+      originalJobDirectory,
+      'data',
+      'outputs',
+      'result.json'
+    )
+    const retainedDirectory = this.getRetainedPrivateResultDirectory(job)
+    const retainedResultPath = this.getRetainedPrivateResultPath(job)
+    const inputChecksum =
+      job.privateResultRetention?.inputChecksum || job.privateInputChecksum
+
+    job.privateResultRetention = {
+      cleanupState: 'pending',
+      inputChecksum,
+      resultChecksum: job.privateResultRetention?.resultChecksum,
+      algorithmImageDigest,
+      retainedAt: job.privateResultRetention?.retainedAt,
+      expiresAt: finishedAt + PRIVATE_RESULT_RETENTION_SECONDS,
+      resultDeletedAt: job.privateResultRetention?.resultDeletedAt
+    }
+    this.sanitizePrivateJob(job)
+    if ((await this.db.updateJob(job)) !== 1) {
+      CORE_LOGGER.error('Private result cleanup deferred: database update failed')
+      return false
+    }
+
+    try {
+      if (job.resultValidation && !job.privateResultRetention.resultDeletedAt) {
+        mkdirSync(retainedDirectory, { recursive: true, mode: 0o700 })
+        chmodSync(path.join(this.getStoragePath(), PRIVATE_RESULT_DIRECTORY), 0o700)
+        chmodSync(retainedDirectory, 0o700)
+
+        if (!existsSync(retainedResultPath)) {
+          const result = readFileSync(originalResultPath)
+          const temporaryPath = `${retainedResultPath}.tmp`
+          rmSync(temporaryPath, { force: true })
+          try {
+            writeFileSync(temporaryPath, result, { flag: 'wx', mode: 0o600 })
+            renameSync(temporaryPath, retainedResultPath)
+          } finally {
+            rmSync(temporaryPath, { force: true })
+          }
+        }
+
+        const retainedResult = readFileSync(retainedResultPath)
+        const resultChecksum = createHash('sha256').update(retainedResult).digest('hex')
+        const expectedChecksum = job.privateResultRetention.resultChecksum
+        if (expectedChecksum && expectedChecksum !== resultChecksum) {
+          throw new Error('retained_result_checksum_mismatch')
+        }
+        job.privateResultRetention.resultChecksum = resultChecksum
+        job.privateResultRetention.retainedAt = Math.floor(Date.now() / 1000)
+      }
+
+      rmSync(originalJobDirectory, { recursive: true, force: true })
+      if (existsSync(originalJobDirectory))
+        throw new Error('private_job_directory_exists')
+      if (
+        job.privateResultRetention.resultChecksum &&
+        !job.privateResultRetention.resultDeletedAt &&
+        !existsSync(retainedResultPath)
+      ) {
+        throw new Error('retained_result_missing')
+      }
+      if (!runtimeCleanupSucceeded) throw new Error('private_runtime_cleanup_failed')
+
+      job.privateResultRetention.cleanupState = 'complete'
+      delete job.privateResultRetention.cleanupErrorCode
+      if ((await this.db.updateJob(job)) !== 1) {
+        throw new Error('private_cleanup_completion_not_persisted')
+      }
+      return true
+    } catch (_error) {
+      job.privateResultRetention.cleanupState = 'failed'
+      job.privateResultRetention.cleanupErrorCode = 'private_cleanup_failed'
+      await this.db.updateJob(job).catch(() => 0)
+      CORE_LOGGER.error('Private result cleanup failed; operator action required')
+      return false
+    }
+  }
+
+  private async recoverPrivateJobMaterial(): Promise<void> {
+    const privateEnvironmentIds = [...this.privateDatasetPolicies.keys()]
+    if (privateEnvironmentIds.length === 0) return
+    const jobs = await this.db.getFinishedJobs(privateEnvironmentIds)
+    for (const job of jobs) {
+      const originalJobDirectory = path.join(this.getStoragePath(), job.jobId)
+      if (
+        job.privateResultRetention?.cleanupState === 'complete' &&
+        !existsSync(originalJobDirectory) &&
+        this.retainedPrivateResultIsValid(job)
+      ) {
+        continue
+      }
+      await this.cleanupJob(job)
+    }
+  }
+
+  private async cleanupJob(job: DBComputeJob): Promise<boolean> {
     // cleaning up
     // - claim payment or release lock
     //  - get algo logs
@@ -2447,10 +2637,12 @@ export class C2DEngineDocker extends C2DEngine {
     this.jobImageSizes.delete(job.jobId)
     this.releaseCpus(job.jobId)
 
+    const privateJob = this.isPrivateJob(job)
+    let runtimeCleanupSucceeded = true
     try {
       const container = this.docker.getContainer(job.jobId + '-algoritm')
       if (container) {
-        if (job.status !== C2DStatusNumber.AlgorithmFailed) {
+        if (!privateJob && job.status !== C2DStatusNumber.AlgorithmFailed) {
           writeFileSync(
             this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log',
             await container.logs({
@@ -2463,7 +2655,10 @@ export class C2DEngineDocker extends C2DEngine {
         await container.remove()
       }
     } catch (e) {
-      // console.error('Container not found! ' + e.message)
+      if (e?.statusCode !== 404) {
+        runtimeCleanupSucceeded = false
+        CORE_LOGGER.error('Failed to remove compute container')
+      }
     }
     try {
       const volume = this.docker.getVolume(job.jobId + '-volume')
@@ -2471,11 +2666,17 @@ export class C2DEngineDocker extends C2DEngine {
         try {
           await volume.remove()
         } catch (e) {
-          CORE_LOGGER.error('Failed to remove volume: ' + e.message)
+          if (e?.statusCode !== 404) {
+            runtimeCleanupSucceeded = false
+            CORE_LOGGER.error('Failed to remove compute volume')
+          }
         }
       }
     } catch (e) {
-      CORE_LOGGER.error('Container volume not found! ' + e.message)
+      if (e?.statusCode !== 404) {
+        runtimeCleanupSucceeded = false
+        CORE_LOGGER.error('Failed to inspect compute volume')
+      }
     }
     try {
       // remove folders
@@ -2501,13 +2702,10 @@ export class C2DEngineDocker extends C2DEngine {
           e.message
       )
     }
-  }
-
-  private deleteOutputFolder(job: DBComputeJob) {
-    rmSync(this.getStoragePath() + '/' + job.jobId + '/data/outputs/', {
-      recursive: true,
-      force: true
-    })
+    if (privateJob) {
+      return await this.cleanupPrivateJobMaterial(job, runtimeCleanupSucceeded)
+    }
+    return runtimeCleanupSucceeded
   }
 
   private getDiskQuota(job: DBComputeJob): number {
@@ -3157,12 +3355,13 @@ export class C2DEngineDocker extends C2DEngine {
         const fullPath = jobFolderPath + '/data/inputs/dataset.json'
         appendFileSync(configLogPath, 'Downloading verified private dataset\n')
         try {
-          await downloadPrivateDataset(
+          const provisioned = await downloadPrivateDataset(
             storage.getFile() as UrlFileObject,
             fullPath,
             job.jobId,
             privateDatasetPolicy
           )
+          job.privateInputChecksum = provisioned.checksum
         } catch (e) {
           CORE_LOGGER.error(`Unable to provision private dataset: ${e.message}`)
           appendFileSync(
@@ -3289,8 +3488,9 @@ export class C2DEngineDocker extends C2DEngine {
         if (!existsSync(dir)) {
           mkdirSync(dir, { recursive: true })
         }
-        // update directory permissions to allow read/write from job containers
-        chmodSync(dir, 0o777)
+        // Private input is uploaded through the Docker API; it never needs
+        // world-readable host permissions.
+        chmodSync(dir, this.privateDatasetPolicies.has(job.environment) ? 0o700 : 0o777)
       }
       return true
     } catch (e) {
@@ -3305,19 +3505,76 @@ export class C2DEngineDocker extends C2DEngine {
     isCleanAfterDownload: boolean = false
   ): Promise<boolean> {
     if (!job) return false
-    CORE_LOGGER.info('Cleaning up C2D storage for Job: ' + job.jobId)
+    const storageDirectories = [path.join(this.getStoragePath(), job.jobId)]
+    if (this.isPrivateJob(job)) {
+      storageDirectories.push(this.getRetainedPrivateResultDirectory(job))
+    }
     try {
+      const persistedJobs = await this.db.getJob(job.jobId)
+      if (
+        persistedJobs.length === 0 &&
+        storageDirectories.every((directory) => !existsSync(directory))
+      ) {
+        return true
+      }
+      CORE_LOGGER.info('Cleaning up C2D storage for Job: ' + job.jobId)
+      let privateCleanupSucceeded = true
       // delete the storage
       // for free env, the container is deleted as soon as we download the results
       // so we avoid trying to do it again
       if (!isCleanAfterDownload) {
-        await this.cleanupJob(job)
+        const privateMaterialAlreadyClean =
+          job.privateResultRetention?.cleanupState === 'complete' &&
+          !existsSync(path.join(this.getStoragePath(), job.jobId))
+        if (!privateMaterialAlreadyClean) {
+          privateCleanupSucceeded = await this.cleanupJob(job)
+        }
       }
 
-      // delete output folders
-      this.deleteOutputFolder(job)
-      // delete the job
+      for (const directory of storageDirectories) {
+        rmSync(directory, { recursive: true, force: true })
+      }
+      if (storageDirectories.some((directory) => existsSync(directory))) {
+        CORE_LOGGER.error('C2D storage cleanup failed filesystem verification')
+        return false
+      }
+
+      if (job.privateResultRetention) {
+        job.privateResultRetention.resultDeletedAt ??= Math.floor(Date.now() / 1000)
+        job.additionalViewers = []
+        if ((await this.db.updateJob(job)) !== 1) {
+          throw new Error('private_result_expiry_not_persisted')
+        }
+        if (!privateCleanupSucceeded) {
+          CORE_LOGGER.error(
+            'Expired private result removed, but runtime cleanup still requires operator action'
+          )
+          return false
+        }
+        const settlement = job.payment
+          ? await this.db.getSettlementByJobId(job.jobId)
+          : null
+        const settlementComplete =
+          !job.payment ||
+          Boolean(
+            settlement &&
+            ['charged', 'not_charged', 'refunded'].includes(settlement.status)
+          )
+        if (!settlementComplete) {
+          CORE_LOGGER.warn(
+            'Private result deleted at expiry; minimal job retained for pending settlement'
+          )
+          return false
+        }
+      }
+      if (this.isPrivateJob(job) && !privateCleanupSucceeded) return false
+
       await this.db.deleteJob(job.jobId)
+      const remainingJobs = await this.db.getJob(job.jobId)
+      if (remainingJobs.length !== 0) {
+        CORE_LOGGER.error('C2D storage cleanup failed database verification')
+        return false
+      }
       return true
     } catch (e) {
       CORE_LOGGER.error('Error cleaning up C2D storage and Job: ' + e.message)

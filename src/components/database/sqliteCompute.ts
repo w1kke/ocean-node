@@ -63,7 +63,9 @@ function getInternalStructure(job: DBComputeJob): any {
     jobIdHash: job.jobIdHash,
     buildStartTimestamp: job.buildStartTimestamp,
     buildStopTimestamp: job.buildStopTimestamp,
-    resultValidation: job.resultValidation
+    resultValidation: job.resultValidation,
+    privateResultRetention: job.privateResultRetention,
+    privateInputChecksum: job.privateInputChecksum
   }
   return internalBlob
 }
@@ -487,8 +489,14 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
     // TO DO C2D
     const data: any[] = [
       job.owner,
+      job.did ?? null,
       job.status,
       job.statusText,
+      Array.isArray(job.inputDID)
+        ? convertArrayToString(job.inputDID)
+        : (job.inputDID ?? null),
+      job.algoDID ?? null,
+      job.agreementId ?? null,
       job.maxJobDuration,
       generateBlobFromJSON(job),
       job.dateFinished,
@@ -498,8 +506,12 @@ export class SQLiteCompute implements ComputeDatabaseProvider {
       UPDATE ${this.schema.name} 
       SET 
       owner = ?,
+      did = ?,
       status = ?,
       statusText = ?,
+      inputDID = ?,
+      algoDID = ?,
+      agreementId = ?,
       expireTimestamp = ?, 
       body = ?,
       dateFinished = ?

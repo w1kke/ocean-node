@@ -297,6 +297,9 @@ export const C2DEnvironmentConfigSchema = z
         'Private dataset environments require disabled algorithm networking, bounded contract-validated single-JSON results, and disabled image builds'
     }
   )
+  .refine((data) => !data.privateDataset || data.storageExpiry === 14 * 24 * 60 * 60, {
+    message: 'Private dataset aggregate results require exactly 14 days retention'
+  })
   .refine((data) => data.storageExpiry >= data.maxJobDuration, {
     message: '"storageExpiry" should be greater than "maxJobDuration"'
   })
