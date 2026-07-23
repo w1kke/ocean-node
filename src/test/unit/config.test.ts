@@ -123,7 +123,8 @@ describe('Should require an explicit consumer result policy', () => {
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
-      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN'
+      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
+      releaseId: 'b'.repeat(64)
     }
     expect(
       C2DEnvironmentConfigSchema.safeParse({
@@ -169,7 +170,8 @@ describe('Should require an explicit consumer result policy', () => {
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
-      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN'
+      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
+      releaseId: 'b'.repeat(64)
     }
     expect(
       C2DEnvironmentConfigSchema.safeParse({
@@ -205,6 +207,12 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: { ...policy, bearerTokenEnv: 'not a safe env name' }
       }).success
     ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        privateDataset: { ...policy, releaseId: 'named-release' }
+      }).success
+    ).to.equal(false)
   })
 
   it('rejects private datasets in exfiltration-prone environments', () => {
@@ -212,7 +220,8 @@ describe('Should require an explicit consumer result policy', () => {
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
       maxBytes: 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
-      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN'
+      bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
+      releaseId: 'b'.repeat(64)
     }
     for (const unsafe of [
       {

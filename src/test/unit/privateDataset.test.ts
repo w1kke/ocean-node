@@ -24,6 +24,7 @@ describe('Private dataset provisioning', () => {
   let requestCount: number
   let receivedJobId: string
   let receivedAuthorization: string
+  let receivedReleaseId: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
@@ -34,12 +35,14 @@ describe('Private dataset provisioning', () => {
     requestCount = 0
     receivedJobId = ''
     receivedAuthorization = ''
+    receivedReleaseId = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
       requestCount += 1
       receivedJobId = String(request.headers['x-ocean-compute-job-id'] ?? '')
       receivedAuthorization = String(request.headers.authorization ?? '')
+      receivedReleaseId = String(request.headers['x-brainstem-cohort-release-id'] ?? '')
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
         response.end()
@@ -68,7 +71,8 @@ describe('Private dataset provisioning', () => {
       url,
       maxBytes: 1024,
       approvedAlgorithmImage: IMAGE,
-      bearerTokenEnv: 'CRAB_C2D_TEST_TOKEN'
+      bearerTokenEnv: 'CRAB_C2D_TEST_TOKEN',
+      releaseId: 'c'.repeat(64)
     }
     environment = { CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough' }
     file = {
@@ -113,6 +117,7 @@ describe('Private dataset provisioning', () => {
     expect(receivedAuthorization).to.equal(
       'Bearer generated-test-token-that-is-long-enough'
     )
+    expect(receivedReleaseId).to.equal('c'.repeat(64))
     expect(readFileSync(destination)).to.deep.equal(body)
     expect(statSync(destination).mode & 0o777).to.equal(0o600)
     expect(result.bytes).to.equal(body.length)
@@ -123,6 +128,14 @@ describe('Private dataset provisioning', () => {
     file.headers = {}
     file.headers['x-Ocean-Compute-Job-Id'] = 'caller-controlled'
     await expectFailure('private_dataset_job_header_is_reserved')
+    expect(requestCount).to.equal(0)
+  })
+
+  it('rejects caller control of the cohort release header before fetching', async () => {
+    file.headers = {
+      'X-Brainstem-Cohort-Release-Id': 'researcher-controlled'
+    }
+    await expectFailure('private_dataset_release_header_is_reserved')
     expect(requestCount).to.equal(0)
   })
 

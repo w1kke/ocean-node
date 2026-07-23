@@ -10,6 +10,7 @@ import type { UrlFileObject } from '../../@types/fileObject.js'
 const JOB_ID = /^[0-9a-f]{64}$/
 const SHA256 = /^[0-9a-f]{64}$/
 const JOB_HEADER = 'x-ocean-compute-job-id'
+const RELEASE_HEADER = 'x-brainstem-cohort-release-id'
 
 export class PrivateDatasetError extends Error {
   constructor(code: string) {
@@ -57,6 +58,9 @@ function requestHeaders(
     if (key.toLowerCase() === JOB_HEADER) {
       throw new PrivateDatasetError('private_dataset_job_header_is_reserved')
     }
+    if (key.toLowerCase() === RELEASE_HEADER) {
+      throw new PrivateDatasetError('private_dataset_release_header_is_reserved')
+    }
   }
   if (suppliedHeaders.length > 0) {
     throw new PrivateDatasetError('private_dataset_headers_not_allowed')
@@ -66,7 +70,8 @@ function requestHeaders(
     Accept: 'application/json',
     'Accept-Encoding': 'identity',
     Authorization: `Bearer ${environment[policy.bearerTokenEnv]}`,
-    'X-Ocean-Compute-Job-Id': jobId
+    'X-Ocean-Compute-Job-Id': jobId,
+    'X-Brainstem-Cohort-Release-Id': policy.releaseId
   }
 }
 
