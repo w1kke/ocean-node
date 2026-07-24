@@ -26,7 +26,10 @@ const VALUE_POLICY = 'brainstem.equal-cohort-contribution/v1'
 const MAX_RESPONSE_BYTES = 16 * 1024
 
 export class ParticipantValueError extends Error {
-  constructor(code: string) {
+  constructor(
+    code: string,
+    readonly retryable: boolean = false
+  ) {
     super(code)
     this.name = 'ParticipantValueError'
   }
@@ -117,9 +120,11 @@ export function validateParticipantValueCommitment(
     value.schema !== COMMITMENT_SCHEMA ||
     value.computeReceiptSha256 !== receiptSha256 ||
     value.valuePolicy !== VALUE_POLICY ||
-    !Number.isSafeInteger(value.participantCount) ||
-    Number(value.participantCount) < 1 ||
-    Number(value.participantCount) > 1_000 ||
+    (receipt.resultStatus === 'insufficient_data'
+      ? value.participantCount !== null
+      : !Number.isSafeInteger(value.participantCount) ||
+        Number(value.participantCount) < 1 ||
+        Number(value.participantCount) > 1_000) ||
     !Number.isSafeInteger(value.amountPerParticipant) ||
     Number(value.amountPerParticipant) < 1 ||
     Number(value.amountPerParticipant) > 1_000 ||
@@ -249,5 +254,13 @@ export async function commitParticipantValue(
     }
   }
   if (lastError instanceof ParticipantValueError) throw lastError
-  throw new ParticipantValueError('participant_value_commit_failed')
+  const status = axios.isAxiosError(lastError) ? lastError.response?.status : undefined
+  const retryable =
+    status === undefined || status >= 500 || [408, 425, 429].includes(status)
+  throw new ParticipantValueError(
+    retryable
+      ? 'participant_value_commit_unavailable'
+      : 'participant_value_commit_rejected',
+    retryable
+  )
 }

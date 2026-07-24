@@ -86,7 +86,11 @@ import {
   assertPrivateDatasetJob,
   downloadPrivateDataset
 } from './privateDataset.js'
-import { commitParticipantValue, prepareParticipantValue } from './participantValue.js'
+import {
+  commitParticipantValue,
+  ParticipantValueError,
+  prepareParticipantValue
+} from './participantValue.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -2318,6 +2322,14 @@ export class C2DEngineDocker extends C2DEngine {
           job.participantValueStatus = 'committed'
         } catch (e) {
           CORE_LOGGER.error('Failed to commit participant value: ' + e.message)
+          if (e instanceof ParticipantValueError && e.retryable) {
+            job.participantValue = undefined
+            job.participantValueStatus = undefined
+            if ((await this.db.updateJob(job)) !== 1) {
+              throw new Error('retryable participant value state was not persisted')
+            }
+            return
+          }
           job.status = C2DStatusNumber.ResultsFetchFailed
           job.statusText = C2DStatusText.ResultsFetchFailed
           job.participantValue = undefined

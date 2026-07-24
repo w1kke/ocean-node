@@ -245,7 +245,7 @@ export interface ParticipantValueCommitment {
   schema: 'brainstem.participant-value-commitment/v1'
   computeReceiptSha256: string
   valuePolicy: 'brainstem.equal-cohort-contribution/v1'
-  participantCount: number
+  participantCount: number | null
   amountPerParticipant: number
   entitlementSetSha256: string
   committedAt: string

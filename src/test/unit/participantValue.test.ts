@@ -48,7 +48,7 @@ async function commitment(receipt: ReturnType<typeof createComputeReceipt>) {
       .update(canonicalJson(receipt))
       .digest('hex'),
     valuePolicy: 'brainstem.equal-cohort-contribution/v1' as const,
-    participantCount: 20,
+    participantCount: receipt.resultStatus === 'insufficient_data' ? null : 20,
     amountPerParticipant: 3,
     entitlementSetSha256: 'e'.repeat(64),
     committedAt: receipt.completedAt
@@ -163,6 +163,7 @@ describe('participant value receipt handshake', () => {
     expect(
       validateParticipantValueCommitment(value, receipt, CRAB.address)
     ).to.deep.equal(value)
+    expect(value.participantCount).to.equal(null)
 
     expect(() =>
       validateParticipantValueCommitment(
@@ -174,5 +175,45 @@ describe('participant value receipt handshake', () => {
     expect(() =>
       validateParticipantValueCommitment(value, receipt, OTHER.address)
     ).to.throw(ParticipantValueError, 'participant_value_signature_invalid')
+  })
+
+  it('marks exhausted service failures retryable and explicit rejection terminal', async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    )
+    server = createServer((request, response) => {
+      requests += 1
+      request.resume()
+      response.writeHead(requests <= 2 ? 503 : 409)
+      response.end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const request = await prepareParticipantValue(job(), RESULT, policy(baseUrl), NODE)
+
+    let transient: ParticipantValueError | undefined
+    try {
+      await commitParticipantValue(
+        request,
+        policy(baseUrl),
+        { CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough' },
+        2
+      )
+    } catch (error) {
+      transient = error as ParticipantValueError
+    }
+    expect(transient.message).to.equal('participant_value_commit_unavailable')
+    expect(transient.retryable).to.equal(true)
+
+    let rejected: ParticipantValueError | undefined
+    try {
+      await commitParticipantValue(request, policy(baseUrl), {
+        CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough'
+      })
+    } catch (error) {
+      rejected = error as ParticipantValueError
+    }
+    expect(rejected.message).to.equal('participant_value_commit_rejected')
+    expect(rejected.retryable).to.equal(false)
   })
 })
