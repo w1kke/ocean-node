@@ -32,7 +32,7 @@ export async function decryptFilesObject(
 }
 
 export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): ComputeJob {
-  return {
+  const computeJob: ComputeJob = {
     owner: dbCompute.owner,
     did: dbCompute.did,
     jobId: dbCompute.jobId,
@@ -50,4 +50,6 @@ export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): Comp
     terminationDetails: dbCompute.terminationDetails,
     queueMaxWaitTime: dbCompute.queueMaxWaitTime
   }
+  if (dbCompute.participantValue) computeJob.participantValue = dbCompute.participantValue
+  return computeJob
 }

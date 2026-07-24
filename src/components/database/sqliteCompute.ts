@@ -64,6 +64,8 @@ function getInternalStructure(job: DBComputeJob): any {
     buildStartTimestamp: job.buildStartTimestamp,
     buildStopTimestamp: job.buildStopTimestamp,
     resultValidation: job.resultValidation,
+    participantValue: job.participantValue,
+    participantValueRequired: job.participantValueRequired,
     privateResultRetention: job.privateResultRetention,
     privateInputChecksum: job.privateInputChecksum
   }

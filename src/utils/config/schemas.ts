@@ -289,6 +289,12 @@ export const C2DEnvironmentConfigSchema = z
           .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
         bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
         releaseId: z.string().regex(/^[0-9a-f]{64}$/),
+        participantValue: z
+          .object({
+            crabSignerAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/)
+          })
+          .strict()
+          .optional(),
         tls: z
           .object({
             caFile: z

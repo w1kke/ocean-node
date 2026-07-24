@@ -89,7 +89,9 @@ export function assertPrivateDatasetConfiguration(
   }
 }
 
-function privateDatasetHttpsAgent(policy: PrivateDatasetPolicy): HttpsAgent | undefined {
+export function privateDatasetHttpsAgent(
+  policy: PrivateDatasetPolicy
+): HttpsAgent | undefined {
   if (!policy.tls) return undefined
   return new HttpsAgent({
     ca: readFileSync(policy.tls.caFile),

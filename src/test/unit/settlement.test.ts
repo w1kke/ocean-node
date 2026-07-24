@@ -97,6 +97,22 @@ describe('paid compute settlement policy', () => {
     )
   })
 
+  it('never charges a value-enabled job before Crab has committed participant value', () => {
+    const complete = job(C2DStatusNumber.JobSettle)
+    complete.resultValidation = {
+      contract: 'brainstem.c2d-result/v1',
+      status: 'complete',
+      billable: true
+    }
+    expect(decideSettlement(complete, 0.25, true, true)).to.deep.equal({
+      decision: 'release',
+      amount: 0,
+      reason: 'participant_value_missing'
+    })
+    complete.participantValue = {} as DBComputeJob['participantValue']
+    expect(decideSettlement(complete, 0.25, true, true).decision).to.equal('charge')
+  })
+
   it('keeps intent decisions immutable and exposes only confirmed facts', () => {
     const prepared = intent()
     expect(sameSettlementIntent(prepared, { ...prepared, status: 'broadcast' })).to.equal(

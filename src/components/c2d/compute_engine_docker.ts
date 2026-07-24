@@ -86,6 +86,7 @@ import {
   assertPrivateDatasetJob,
   downloadPrivateDataset
 } from './privateDataset.js'
+import { commitParticipantValue } from './participantValue.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -717,8 +718,14 @@ export class C2DEngineDocker extends C2DEngine {
     expired: boolean
   ): Promise<{ decision: 'charge' | 'release'; amount: number; reason: string }> {
     if (expired) return { decision: 'release', amount: 0, reason: 'lock_expired' }
+    const participantValueRequired = Boolean(job.participantValueRequired)
     if (job.status !== C2DStatusNumber.JobSettle) {
-      return decideSettlement(job, 0, this.privateDatasetPolicies.has(job.environment))
+      return decideSettlement(
+        job,
+        0,
+        this.privateDatasetPolicies.has(job.environment),
+        participantValueRequired
+      )
     }
 
     const env = await this.getComputeEnvironment(job.payment.chainId, job.environment)
@@ -740,7 +747,12 @@ export class C2DEngineDocker extends C2DEngine {
     if (!Number.isFinite(cost) || cost < 0) {
       return { decision: 'release', amount: 0, reason: 'settlement_cost_invalid' }
     }
-    return decideSettlement(job, cost, this.privateDatasetPolicies.has(job.environment))
+    return decideSettlement(
+      job,
+      cost,
+      this.privateDatasetPolicies.has(job.environment),
+      participantValueRequired
+    )
   }
 
   private async reconcileJobSettlement(
@@ -1420,6 +1432,7 @@ export class C2DEngineDocker extends C2DEngine {
       algoStartTimestamp: '0',
       algoStopTimestamp: '0',
       payment,
+      participantValueRequired: Boolean(privateDatasetPolicy?.participantValue),
       metadata,
       additionalViewers,
       terminationDetails: { exitCode: null, OOMKilled: null },
@@ -1511,6 +1524,9 @@ export class C2DEngineDocker extends C2DEngine {
         ? ({ mode: 'singleJson' } as const)
         : (await this.getJobEnvironment(jobs[0]))?.consumerResultPolicy
       if (!policy) return res
+      if (jobs[0].participantValueRequired && !jobs[0].participantValue) {
+        return res
+      }
 
       const filename = policy.mode === 'singleJson' ? 'result.json' : 'outputs.tar'
       if (this.isPrivateResultExpired(jobs[0])) return res
@@ -2253,10 +2269,24 @@ export class C2DEngineDocker extends C2DEngine {
             singleJsonResult,
             resultPolicy
           )
+          const privatePolicy = this.privateDatasetPolicies.get(job.environment)
+          if (privatePolicy?.participantValue) {
+            job.participantValue = await commitParticipantValue(
+              job,
+              singleJsonResult,
+              privatePolicy,
+              this.keyManager.getEthWallet()
+            )
+            if ((await this.db.updateJob(job)) !== 1) {
+              throw new Error('participant value commitment was not persisted')
+            }
+          }
         } catch (e) {
           CORE_LOGGER.error('Failed to validate result.json: ' + e.message)
           job.status = C2DStatusNumber.ResultsFetchFailed
           job.statusText = C2DStatusText.ResultsFetchFailed
+          job.participantValue = undefined
+          job.resultValidation = undefined
         }
       }
 

@@ -123,6 +123,9 @@ export interface PrivateDatasetPolicy {
   approvedAlgorithmImage: string
   bearerTokenEnv: string
   releaseId: string
+  participantValue?: {
+    crabSignerAddress: string
+  }
   tls?: {
     caFile: string
     clientCertificateFile: string
@@ -238,6 +241,17 @@ export interface ComputeSettlement {
   transactionHash?: string
 }
 
+export interface ParticipantValueCommitment {
+  schema: 'brainstem.participant-value-commitment/v1'
+  computeReceiptSha256: string
+  valuePolicy: 'brainstem.equal-cohort-contribution/v1'
+  participantCount: number
+  amountPerParticipant: number
+  entitlementSetSha256: string
+  committedAt: string
+  signature: string
+}
+
 export interface ComputeJob {
   owner: string
   did?: string
@@ -255,6 +269,7 @@ export interface ComputeJob {
   metadata?: DBComputeJobMetadata
   terminationDetails?: ComputeJobTerminationDetails
   settlement?: ComputeSettlement
+  participantValue?: ParticipantValueCommitment
   queueMaxWaitTime: number // max time in seconds a job can wait in the queue before being started
 }
 
@@ -382,6 +397,7 @@ export interface DBComputeJob extends ComputeJob {
   resources: ComputeResourceRequestWithPrice[]
   payment?: DBComputeJobPayment
   resultValidation?: DBComputeResultValidation
+  participantValueRequired?: boolean
   privateResultRetention?: DBPrivateResultRetention
   privateInputChecksum?: string
   metadata?: DBComputeJobMetadata

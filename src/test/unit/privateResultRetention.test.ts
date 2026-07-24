@@ -239,6 +239,41 @@ describe('private aggregate result retention', () => {
     ])
   })
 
+  it('withholds a value-enabled result until the verified commitment is persisted', async () => {
+    const finishedAt = Math.floor(Date.now() / 1000)
+    const job = makeJob(finishedAt)
+    const db = {
+      updateJob: sinon.stub().resolves(1),
+      getJob: sinon.stub().callsFake(() => [job]),
+      getSettlementByJobId: sinon.stub().resolves(null)
+    }
+    const engine = makeEngine(tempFolder, db)
+    const configured = (engine as any).privateDatasetPolicies.get('private-env')
+    configured.participantValue = {
+      crabSignerAddress: '0x1111111111111111111111111111111111111111'
+    }
+    job.participantValueRequired = true
+    seedPrivateJobDirectory(engine)
+    expect(await (engine as any).cleanupPrivateJobMaterial(job)).to.equal(true)
+
+    expect(
+      (await engine.getComputeJobStatus(OWNER, null, JOB_ID))[0].results
+    ).to.deep.equal([])
+    job.participantValue = {
+      schema: 'brainstem.participant-value-commitment/v1',
+      computeReceiptSha256: 'c'.repeat(64),
+      valuePolicy: 'brainstem.equal-cohort-contribution/v1',
+      participantCount: 20,
+      amountPerParticipant: 3,
+      entitlementSetSha256: 'd'.repeat(64),
+      committedAt: '2026-07-25T00:00:00Z',
+      signature: `0x${'e'.repeat(130)}`
+    }
+    const [status] = await engine.getComputeJobStatus(OWNER, null, JOB_ID)
+    expect(status.results).to.have.length(1)
+    expect(status.participantValue).to.deep.equal(job.participantValue)
+  })
+
   it('stops serving at the exact expiry boundary and deletes disk plus database idempotently', async () => {
     const now = Math.floor(Date.now() / 1000)
     const job = makeJob(now)

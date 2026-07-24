@@ -32,7 +32,8 @@ export type SettlementDecision = {
 export function decideSettlement(
   job: DBComputeJob,
   calculatedCost: number,
-  requireValidatedResult: boolean
+  requireValidatedResult: boolean,
+  requireParticipantValue: boolean = false
 ): SettlementDecision {
   if (job.status !== C2DStatusNumber.JobSettle) {
     return {
@@ -53,6 +54,9 @@ export function decideSettlement(
         reason: `result_status:${job.resultValidation.status}`
       }
     }
+  }
+  if (requireParticipantValue && !job.participantValue) {
+    return { decision: 'release', amount: 0, reason: 'participant_value_missing' }
   }
 
   return {

@@ -127,7 +127,10 @@ describe('Should require an explicit consumer result policy', () => {
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
       bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
-      releaseId: 'b'.repeat(64)
+      releaseId: 'b'.repeat(64),
+      participantValue: {
+        crabSignerAddress: '0x1111111111111111111111111111111111111111'
+      }
     }
     expect(
       C2DEnvironmentConfigSchema.safeParse({
@@ -177,6 +180,21 @@ describe('Should require an explicit consumer result policy', () => {
         ...baseEnvironment,
         consumerResultPolicy: { mode: 'singleJson', maxBytes: 262144 },
         privateDataset
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: {
+          ...privateDataset,
+          participantValue: { crabSignerAddress: 'not-an-address' }
+        }
       }).success
     ).to.equal(false)
   })
