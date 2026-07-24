@@ -118,10 +118,12 @@ describe('participant value receipt handshake', () => {
     expect(
       verifyMessage(canonicalJson(receivedBody.receipt), receivedBody.signature)
     ).to.equal(NODE.address)
-    expect(result).to.deep.include({
+    expect(result.commitment).to.deep.include({
       participantCount: 20,
       amountPerParticipant: 3
     })
+    expect(result.receipt).to.deep.equal(receivedBody.receipt)
+    expect(result.receiptSignature).to.equal(receivedBody.signature)
   })
 
   it('accepts disclosure-safe suppression and rejects tampering or a wrong signer', async () => {

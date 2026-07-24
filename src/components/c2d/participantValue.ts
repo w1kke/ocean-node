@@ -5,6 +5,8 @@ import type { Signer } from 'ethers'
 import type {
   DBComputeJob,
   ParticipantValueCommitment,
+  ParticipantValueProof,
+  ParticipantValueReceipt,
   PrivateDatasetPolicy
 } from '../../@types/C2D/C2D.js'
 import {
@@ -29,16 +31,7 @@ export class ParticipantValueError extends Error {
   }
 }
 
-export interface ComputeReceipt {
-  schema: typeof RECEIPT_SCHEMA
-  jobIdHash: string
-  inputSha256: string
-  resultSha256: string
-  resultSchema: typeof RESULT_SCHEMA
-  resultStatus: 'complete' | 'insufficient_data'
-  algorithmImageDigest: string
-  completedAt: string
-}
+export type ComputeReceipt = ParticipantValueReceipt
 
 export function canonicalJson(value: object): string {
   const fields = value as Record<string, unknown>
@@ -159,7 +152,7 @@ export async function commitParticipantValue(
   signer: Signer,
   environment: NodeJS.ProcessEnv = process.env,
   attempts: number = 3
-): Promise<ParticipantValueCommitment> {
+): Promise<ParticipantValueProof> {
   if (!policy.participantValue) {
     throw new ParticipantValueError('participant_value_not_configured')
   }
@@ -197,11 +190,12 @@ export async function commitParticipantValue(
       if (!exactKeys(response.data, ['commitment'])) {
         throw new ParticipantValueError('participant_value_response_invalid')
       }
-      return validateParticipantValueCommitment(
+      const commitment = validateParticipantValueCommitment(
         response.data.commitment,
         receipt,
         policy.participantValue.crabSignerAddress
       )
+      return { receipt, receiptSignature: signature, commitment }
     } catch (error) {
       lastError = error
       const status = axios.isAxiosError(error) ? error.response?.status : undefined

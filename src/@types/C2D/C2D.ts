@@ -252,6 +252,23 @@ export interface ParticipantValueCommitment {
   signature: string
 }
 
+export interface ParticipantValueReceipt {
+  schema: 'brainstem.compute-receipt/v1'
+  jobIdHash: string
+  inputSha256: string
+  resultSha256: string
+  resultSchema: 'brainstem.c2d-result/v1'
+  resultStatus: 'complete' | 'insufficient_data'
+  algorithmImageDigest: string
+  completedAt: string
+}
+
+export interface ParticipantValueProof {
+  receipt: ParticipantValueReceipt
+  receiptSignature: string
+  commitment: ParticipantValueCommitment
+}
+
 export interface ComputeJob {
   owner: string
   did?: string
@@ -269,7 +286,7 @@ export interface ComputeJob {
   metadata?: DBComputeJobMetadata
   terminationDetails?: ComputeJobTerminationDetails
   settlement?: ComputeSettlement
-  participantValue?: ParticipantValueCommitment
+  participantValue?: ParticipantValueProof
   queueMaxWaitTime: number // max time in seconds a job can wait in the queue before being started
 }
 

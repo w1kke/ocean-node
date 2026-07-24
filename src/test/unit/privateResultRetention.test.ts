@@ -260,14 +260,27 @@ describe('private aggregate result retention', () => {
       (await engine.getComputeJobStatus(OWNER, null, JOB_ID))[0].results
     ).to.deep.equal([])
     job.participantValue = {
-      schema: 'brainstem.participant-value-commitment/v1',
-      computeReceiptSha256: 'c'.repeat(64),
-      valuePolicy: 'brainstem.equal-cohort-contribution/v1',
-      participantCount: 20,
-      amountPerParticipant: 3,
-      entitlementSetSha256: 'd'.repeat(64),
-      committedAt: '2026-07-25T00:00:00Z',
-      signature: `0x${'e'.repeat(130)}`
+      receipt: {
+        schema: 'brainstem.compute-receipt/v1',
+        jobIdHash: 'a'.repeat(64),
+        inputSha256: 'b'.repeat(64),
+        resultSha256: 'c'.repeat(64),
+        resultSchema: 'brainstem.c2d-result/v1',
+        resultStatus: 'complete',
+        algorithmImageDigest: ALGORITHM_DIGEST,
+        completedAt: '2026-07-25T00:00:00Z'
+      },
+      receiptSignature: `0x${'d'.repeat(130)}`,
+      commitment: {
+        schema: 'brainstem.participant-value-commitment/v1',
+        computeReceiptSha256: 'e'.repeat(64),
+        valuePolicy: 'brainstem.equal-cohort-contribution/v1',
+        participantCount: 20,
+        amountPerParticipant: 3,
+        entitlementSetSha256: 'f'.repeat(64),
+        committedAt: '2026-07-25T00:00:00Z',
+        signature: `0x${'1'.repeat(130)}`
+      }
     }
     const [status] = await engine.getComputeJobStatus(OWNER, null, JOB_ID)
     expect(status.results).to.have.length(1)
