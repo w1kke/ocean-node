@@ -708,6 +708,7 @@ export class C2DEngineDocker extends C2DEngine {
   }
 
   private async finishJobWithoutPayment(job: DBComputeJob): Promise<void> {
+    if (job.status !== C2DStatusNumber.JobSettle) return
     job.status = C2DStatusNumber.JobFinished
     job.statusText = C2DStatusText.JobFinished
     await this.db.updateJob(job)

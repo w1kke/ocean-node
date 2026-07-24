@@ -282,6 +282,19 @@ describe('paid settlement worker', () => {
     expect(job.status).to.equal(C2DStatusNumber.JobSettle)
   })
 
+  it('never turns a failed free job into a successful one', async () => {
+    const job = paidJob(C2DStatusNumber.ResultsFetchFailed)
+    job.isFree = true
+    delete job.payment
+    const worker = await makeWorker(job)
+    folders.push(worker.tempFolder)
+
+    await (worker.engine as any).claimPayments()
+
+    expect(job.status).to.equal(C2DStatusNumber.ResultsFetchFailed)
+    expect(worker.db.updateJob.notCalled).to.equal(true)
+  })
+
   it('claims zero for technical failures and cancels expired locks', async () => {
     const failed = paidJob(C2DStatusNumber.ImageScanFailed)
     delete failed.resultValidation
