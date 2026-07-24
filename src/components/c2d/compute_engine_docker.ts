@@ -86,7 +86,7 @@ import {
   assertPrivateDatasetJob,
   downloadPrivateDataset
 } from './privateDataset.js'
-import { commitParticipantValue } from './participantValue.js'
+import { commitParticipantValue, prepareParticipantValue } from './participantValue.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -2224,8 +2224,6 @@ export class C2DEngineDocker extends C2DEngine {
     }
     if (job.status === C2DStatusNumber.PublishingResults) {
       // get output
-      job.status = C2DStatusNumber.JobSettle
-      job.statusText = C2DStatusText.JobSettle
       let container
       try {
         container = this.docker.getContainer(job.jobId + '-algoritm')
@@ -2254,6 +2252,7 @@ export class C2DEngineDocker extends C2DEngine {
       }
       const environment = await this.getJobEnvironment(job)
       const resultPolicy: ConsumerResultPolicy = environment?.consumerResultPolicy
+      const privatePolicy = this.privateDatasetPolicies.get(job.environment)
       let singleJsonResult: Buffer = null
 
       if (!container || !resultPolicy) {
@@ -2282,12 +2281,52 @@ export class C2DEngineDocker extends C2DEngine {
         }
       }
 
+      const outputsPath = this.getStoragePath() + '/' + job.jobId + '/data/outputs/'
       if (
-        resultPolicy &&
-        job.status !== C2DStatusNumber.ResultsFetchFailed &&
-        container
+        privatePolicy?.participantValue &&
+        job.status === C2DStatusNumber.PublishingResults &&
+        job.resultValidation &&
+        singleJsonResult
       ) {
-        const outputsPath = this.getStoragePath() + '/' + job.jobId + '/data/outputs/'
+        let callbackAttempted = false
+        try {
+          if (job.output) {
+            throw new Error('private_dataset_remote_output_not_allowed')
+          }
+          const resultPath = outputsPath + 'result.json'
+          const temporaryResultPath = resultPath + '.tmp'
+          try {
+            writeFileSync(temporaryResultPath, singleJsonResult, { mode: 0o600 })
+            renameSync(temporaryResultPath, resultPath)
+          } finally {
+            rmSync(temporaryResultPath, { force: true })
+          }
+          job.participantValueRequest = await prepareParticipantValue(
+            job,
+            singleJsonResult,
+            privatePolicy,
+            this.keyManager.getEthWallet()
+          )
+          if ((await this.db.updateJob(job)) !== 1) {
+            throw new Error('participant value request was not persisted')
+          }
+          callbackAttempted = true
+          job.participantValue = await commitParticipantValue(
+            job.participantValueRequest,
+            privatePolicy
+          )
+          job.participantValueStatus = 'committed'
+        } catch (e) {
+          CORE_LOGGER.error('Failed to commit participant value: ' + e.message)
+          job.status = C2DStatusNumber.ResultsFetchFailed
+          job.statusText = C2DStatusText.ResultsFetchFailed
+          job.participantValue = undefined
+          job.participantValueStatus = callbackAttempted ? 'rejected' : undefined
+          job.resultValidation = undefined
+        }
+      }
+
+      if (resultPolicy && job.status === C2DStatusNumber.PublishingResults && container) {
         try {
           let output: ComputeOutput = null
           let storage: Storage = null
@@ -2306,7 +2345,9 @@ export class C2DEngineDocker extends C2DEngine {
             typeof storage.upload === 'function'
 
           if (resultPolicy.mode === 'singleJson') {
-            if (canUpload) {
+            if (privatePolicy?.participantValue) {
+              // The validated result was staged before the value callback.
+            } else if (canUpload) {
               let uploadStream = Readable.from([singleJsonResult])
               if (output.encryption?.key) {
                 const key = Uint8Array.from(Buffer.from(output.encryption.key, 'hex'))
@@ -2374,33 +2415,17 @@ export class C2DEngineDocker extends C2DEngine {
           job.resultValidation = undefined
         }
       }
-      const privatePolicy = this.privateDatasetPolicies.get(job.environment)
-      if (
-        privatePolicy?.participantValue &&
-        job.status === C2DStatusNumber.JobSettle &&
-        job.resultValidation &&
-        singleJsonResult
-      ) {
-        try {
-          job.participantValue = await commitParticipantValue(
-            job,
-            singleJsonResult,
-            privatePolicy,
-            this.keyManager.getEthWallet()
-          )
-          job.participantValueStatus = 'committed'
-        } catch (e) {
-          CORE_LOGGER.error('Failed to commit participant value: ' + e.message)
-          job.status = C2DStatusNumber.ResultsFetchFailed
-          job.statusText = C2DStatusText.ResultsFetchFailed
-          job.participantValue = undefined
-          job.participantValueStatus = 'rejected'
-          job.resultValidation = undefined
-        }
+      if (job.status === C2DStatusNumber.PublishingResults) {
+        job.status = C2DStatusNumber.JobSettle
+        job.statusText = C2DStatusText.JobSettle
       }
+      delete job.participantValueRequest
       job.isRunning = false
       job.dateFinished = String(Date.now() / 1000)
-      await this.db.updateJob(job)
+      const updated = await this.db.updateJob(job)
+      if (privatePolicy?.participantValue && updated !== 1) {
+        throw new Error('participant value result was not persisted')
+      }
       await this.cleanupJob(job)
     }
   }

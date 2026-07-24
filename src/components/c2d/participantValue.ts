@@ -6,6 +6,7 @@ import type {
   DBComputeJob,
   ParticipantValueCommitment,
   ParticipantValueProof,
+  ParticipantValueRequest,
   ParticipantValueReceipt,
   PrivateDatasetPolicy
 } from '../../@types/C2D/C2D.js'
@@ -145,11 +146,44 @@ export function validateParticipantValueCommitment(
   return value as unknown as ParticipantValueCommitment
 }
 
-export async function commitParticipantValue(
+export async function prepareParticipantValue(
   job: DBComputeJob,
   result: Buffer,
   policy: PrivateDatasetPolicy,
-  signer: Signer,
+  signer: Signer
+): Promise<ParticipantValueRequest> {
+  const existing = job.participantValueRequest
+  const receipt = createComputeReceipt(
+    job,
+    result,
+    policy,
+    existing?.receipt?.completedAt
+  )
+  if (existing) {
+    try {
+      if (
+        !exactKeys(existing, ['receipt', 'receiptSignature']) ||
+        canonicalJson(existing.receipt) !== canonicalJson(receipt) ||
+        !SIGNATURE.test(existing.receiptSignature) ||
+        getAddress(verifyMessage(canonicalJson(receipt), existing.receiptSignature)) !==
+          getAddress(await signer.getAddress())
+      ) {
+        throw new Error('invalid prepared request')
+      }
+    } catch {
+      throw new ParticipantValueError('participant_value_request_invalid')
+    }
+    return existing
+  }
+  return {
+    receipt,
+    receiptSignature: await signer.signMessage(canonicalJson(receipt))
+  }
+}
+
+export async function commitParticipantValue(
+  request: ParticipantValueRequest,
+  policy: PrivateDatasetPolicy,
   environment: NodeJS.ProcessEnv = process.env,
   attempts: number = 3
 ): Promise<ParticipantValueProof> {
@@ -164,15 +198,20 @@ export async function commitParticipantValue(
     }
     throw error
   }
-  const receipt = createComputeReceipt(job, result, policy)
-  const signature = await signer.signMessage(canonicalJson(receipt))
+  if (
+    !exactKeys(request, ['receipt', 'receiptSignature']) ||
+    !SIGNATURE.test(request.receiptSignature)
+  ) {
+    throw new ParticipantValueError('participant_value_request_invalid')
+  }
+  const { receipt, receiptSignature } = request
   const url = new URL('/api/v1/internal/c2d/value-commit', policy.url).toString()
   let lastError: unknown
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const response = await axios.post(
         url,
-        { receipt, signature },
+        { receipt, signature: receiptSignature },
         {
           headers: {
             Accept: 'application/json',
@@ -195,7 +234,7 @@ export async function commitParticipantValue(
         receipt,
         policy.participantValue.crabSignerAddress
       )
-      return { receipt, receiptSignature: signature, commitment }
+      return { receipt, receiptSignature, commitment }
     } catch (error) {
       lastError = error
       const status = axios.isAxiosError(error) ? error.response?.status : undefined

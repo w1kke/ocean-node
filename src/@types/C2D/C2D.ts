@@ -263,6 +263,11 @@ export interface ParticipantValueReceipt {
   completedAt: string
 }
 
+export interface ParticipantValueRequest {
+  receipt: ParticipantValueReceipt
+  receiptSignature: string
+}
+
 export interface ParticipantValueProof {
   receipt: ParticipantValueReceipt
   receiptSignature: string
@@ -416,6 +421,7 @@ export interface DBComputeJob extends ComputeJob {
   payment?: DBComputeJobPayment
   resultValidation?: DBComputeResultValidation
   participantValueRequired?: boolean
+  participantValueRequest?: ParticipantValueRequest
   privateResultRetention?: DBPrivateResultRetention
   privateInputChecksum?: string
   metadata?: DBComputeJobMetadata

@@ -9,6 +9,7 @@ import {
   commitParticipantValue,
   createComputeReceipt,
   ParticipantValueError,
+  prepareParticipantValue,
   validateParticipantValueCommitment
 } from '../../components/c2d/participantValue.js'
 
@@ -99,7 +100,8 @@ describe('participant value receipt handshake', () => {
 
   it('signs the bounded receipt, retries a transient failure, and verifies Crab', async () => {
     failOnce = true
-    const result = await commitParticipantValue(job(), RESULT, policy(baseUrl), NODE, {
+    const request = await prepareParticipantValue(job(), RESULT, policy(baseUrl), NODE)
+    const result = await commitParticipantValue(request, policy(baseUrl), {
       CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough'
     })
 
@@ -124,6 +126,29 @@ describe('participant value receipt handshake', () => {
     })
     expect(result.receipt).to.deep.equal(receivedBody.receipt)
     expect(result.receiptSignature).to.equal(receivedBody.signature)
+  })
+
+  it('reuses an exact persisted signed receipt across a restart', async () => {
+    const computeJob = job()
+    const first = await prepareParticipantValue(computeJob, RESULT, policy(baseUrl), NODE)
+    computeJob.participantValueRequest = first
+
+    expect(
+      await prepareParticipantValue(computeJob, RESULT, policy(baseUrl), NODE)
+    ).to.deep.equal(first)
+    let error: unknown
+    try {
+      await prepareParticipantValue(
+        computeJob,
+        Buffer.from(`${RESULT.toString()} `),
+        policy(baseUrl),
+        NODE
+      )
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).to.be.instanceOf(ParticipantValueError)
+    expect((error as Error).message).to.equal('participant_value_request_invalid')
   })
 
   it('accepts disclosure-safe suppression and rejects tampering or a wrong signer', async () => {
