@@ -51,5 +51,8 @@ export function omitDBComputeFieldsFromComputeJob(dbCompute: DBComputeJob): Comp
     queueMaxWaitTime: dbCompute.queueMaxWaitTime
   }
   if (dbCompute.participantValue) computeJob.participantValue = dbCompute.participantValue
+  if (dbCompute.participantValueStatus) {
+    computeJob.participantValueStatus = dbCompute.participantValueStatus
+  }
   return computeJob
 }

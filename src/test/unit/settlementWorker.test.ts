@@ -282,16 +282,18 @@ describe('paid settlement worker', () => {
     expect(job.status).to.equal(C2DStatusNumber.JobSettle)
   })
 
-  it('never turns a failed free job into a successful one', async () => {
+  it('excludes terminal free failures from settlement reconciliation', async () => {
     const job = paidJob(C2DStatusNumber.ResultsFetchFailed)
     job.isFree = true
     delete job.payment
     const worker = await makeWorker(job)
     folders.push(worker.tempFolder)
+    const finish = sinon.spy(worker.engine as any, 'finishJobWithoutPayment')
 
     await (worker.engine as any).claimPayments()
 
     expect(job.status).to.equal(C2DStatusNumber.ResultsFetchFailed)
+    expect(finish.notCalled).to.equal(true)
     expect(worker.db.updateJob.notCalled).to.equal(true)
   })
 

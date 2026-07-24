@@ -282,9 +282,11 @@ describe('private aggregate result retention', () => {
         signature: `0x${'1'.repeat(130)}`
       }
     }
+    job.participantValueStatus = 'committed'
     const [status] = await engine.getComputeJobStatus(OWNER, null, JOB_ID)
     expect(status.results).to.have.length(1)
     expect(status.participantValue).to.deep.equal(job.participantValue)
+    expect(status.participantValueStatus).to.equal('committed')
   })
 
   it('stops serving at the exact expiry boundary and deletes disk plus database idempotently', async () => {

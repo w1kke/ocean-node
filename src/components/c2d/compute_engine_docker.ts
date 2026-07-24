@@ -654,7 +654,9 @@ export class C2DEngineDocker extends C2DEngine {
     try {
       const currentTimestamp = BigInt(Math.floor(Date.now() / 1000))
       const envIds = this.envs.map((env) => env.id)
-      const jobs = await this.db.getJobsByStatus(envIds, SETTLEMENT_JOB_STATUSES)
+      const jobs = (
+        await this.db.getJobsByStatus(envIds, SETTLEMENT_JOB_STATUSES)
+      ).filter((job) => !job.isFree || job.status === C2DStatusNumber.JobSettle)
       CORE_LOGGER.info(`ClaimPayments: got ${jobs.length} jobs to reconcile`)
 
       const providerAddress = this.getKeyManager().getEthAddress()
@@ -2270,23 +2272,12 @@ export class C2DEngineDocker extends C2DEngine {
             singleJsonResult,
             resultPolicy
           )
-          const privatePolicy = this.privateDatasetPolicies.get(job.environment)
-          if (privatePolicy?.participantValue) {
-            job.participantValue = await commitParticipantValue(
-              job,
-              singleJsonResult,
-              privatePolicy,
-              this.keyManager.getEthWallet()
-            )
-            if ((await this.db.updateJob(job)) !== 1) {
-              throw new Error('participant value commitment was not persisted')
-            }
-          }
         } catch (e) {
           CORE_LOGGER.error('Failed to validate result.json: ' + e.message)
           job.status = C2DStatusNumber.ResultsFetchFailed
           job.statusText = C2DStatusText.ResultsFetchFailed
           job.participantValue = undefined
+          job.participantValueStatus = undefined
           job.resultValidation = undefined
         }
       }
@@ -2378,6 +2369,32 @@ export class C2DEngineDocker extends C2DEngine {
           CORE_LOGGER.error('Failed to publish compute result: ' + e.message)
           job.status = C2DStatusNumber.ResultsUploadFailed
           job.statusText = C2DStatusText.ResultsUploadFailed
+          job.participantValue = undefined
+          job.participantValueStatus = undefined
+          job.resultValidation = undefined
+        }
+      }
+      const privatePolicy = this.privateDatasetPolicies.get(job.environment)
+      if (
+        privatePolicy?.participantValue &&
+        job.status === C2DStatusNumber.JobSettle &&
+        job.resultValidation &&
+        singleJsonResult
+      ) {
+        try {
+          job.participantValue = await commitParticipantValue(
+            job,
+            singleJsonResult,
+            privatePolicy,
+            this.keyManager.getEthWallet()
+          )
+          job.participantValueStatus = 'committed'
+        } catch (e) {
+          CORE_LOGGER.error('Failed to commit participant value: ' + e.message)
+          job.status = C2DStatusNumber.ResultsFetchFailed
+          job.statusText = C2DStatusText.ResultsFetchFailed
+          job.participantValue = undefined
+          job.participantValueStatus = 'rejected'
           job.resultValidation = undefined
         }
       }

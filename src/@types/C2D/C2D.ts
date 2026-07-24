@@ -287,6 +287,7 @@ export interface ComputeJob {
   terminationDetails?: ComputeJobTerminationDetails
   settlement?: ComputeSettlement
   participantValue?: ParticipantValueProof
+  participantValueStatus?: 'committed' | 'rejected'
   queueMaxWaitTime: number // max time in seconds a job can wait in the queue before being started
 }
 
