@@ -38,6 +38,24 @@ function isValidTlsServerName(value: string): boolean {
   return true
 }
 
+function isLocalProofHostname(value: string): boolean {
+  const parts = value.split('.')
+  const loopbackIpv4 =
+    parts.length === 4 &&
+    parts[0] === '127' &&
+    parts.every(
+      (part) =>
+        part.length > 0 &&
+        [...part].every((character) => character >= '0' && character <= '9') &&
+        Number(part) <= 255
+    )
+  return (
+    value === 'localhost' ||
+    loopbackIpv4 ||
+    (!value.includes('.') && isValidTlsServerName(value))
+  )
+}
+
 export const SupportedNetworkSchema = z.object({
   chainId: z.number(),
   rpc: z.string(),
@@ -312,10 +330,107 @@ export const C2DEnvironmentConfigSchema = z
           .optional()
       })
       .strict()
+      .optional(),
+    personalInsight: z
+      .object({
+        crabUrl: z
+          .string()
+          .url()
+          .refine((value) => {
+            const parsed = new URL(value)
+            return (
+              !parsed.username &&
+              !parsed.password &&
+              !parsed.search &&
+              !parsed.hash &&
+              parsed.pathname === '/'
+            )
+          }, 'personal Insight Crab URL must be a credential-free origin'),
+        approvedAlgorithmImage: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
+        bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
+        bffBearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
+        ramWorkspaceRoot: z
+          .string()
+          .regex(/^\/dev\/shm\/[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/),
+        inputSchema: z.literal('brainstem.personal-resting-rr/v1'),
+        inputPolicy: z.literal('brainstem.personal-resting-rr/latest-16/v1'),
+        resultContract: z.literal('brainstem.c2d-result/v1'),
+        resultProfile: z.literal('brainstem.personal-resting-heart-overview/v1'),
+        audience: z.literal('brainstem-ocean-node'),
+        maxInputBytes: z
+          .number()
+          .int()
+          .min(1)
+          .max(1024 * 1024),
+        maxResultBytes: z
+          .number()
+          .int()
+          .min(1)
+          .max(256 * 1024),
+        maxJobDuration: z.number().int().min(1).max(300),
+        resources: z
+          .object({
+            cpu: z.number().int().min(1),
+            ram: z.number().int().min(1)
+          })
+          .strict(),
+        allowInsecureLocalProof: z.boolean().optional().default(false),
+        tls: z
+          .object({
+            caFile: z
+              .string()
+              .regex(/^\/run\/brainstem-secrets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+            clientCertificateFile: z
+              .string()
+              .regex(/^\/run\/brainstem-secrets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+            clientKeyFile: z
+              .string()
+              .regex(/^\/run\/brainstem-secrets\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
+            serverName: z.string().refine(isValidTlsServerName, 'invalid TLS server name')
+          })
+          .strict()
+          .optional()
+      })
+      .strict()
+      .superRefine((policy, context) => {
+        const url = new URL(policy.crabUrl)
+        if (policy.bffBearerTokenEnv === policy.bearerTokenEnv) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['bffBearerTokenEnv'],
+            message: 'Personal Insight BFF and Crab credentials must be separate'
+          })
+        }
+        if (
+          url.protocol !== 'https:' &&
+          !(
+            policy.allowInsecureLocalProof &&
+            url.protocol === 'http:' &&
+            isLocalProofHostname(url.hostname)
+          )
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['crabUrl'],
+            message:
+              'Personal Insight Crab URL requires HTTPS unless the explicit local-proof flag is set'
+          })
+        }
+        if (policy.tls && url.protocol !== 'https:') {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['tls'],
+            message: 'Personal Insight mTLS requires HTTPS'
+          })
+        }
+      })
       .optional()
   })
   .refine(
     (data) =>
+      data.personalInsight !== undefined ||
       (data.fees !== undefined && Object.keys(data.fees).length > 0) ||
       (data.free !== undefined && data.free !== null),
     {
@@ -323,6 +438,9 @@ export const C2DEnvironmentConfigSchema = z
         'Each environment must have either a non-empty "fees" configuration or a "free" configuration'
     }
   )
+  .refine((data) => !(data.privateDataset && data.personalInsight), {
+    message: 'Cohort private-dataset and personal-Insight policies are mutually exclusive'
+  })
   .refine(
     (data) => {
       if (!data.privateDataset?.tls) return true
@@ -334,6 +452,33 @@ export const C2DEnvironmentConfigSchema = z
     },
     {
       message: 'Private dataset mTLS requires HTTPS and a matching server name'
+    }
+  )
+  .refine(
+    (data) =>
+      !data.personalInsight ||
+      (data.enableNetwork === false &&
+        data.consumerResultPolicy.mode === 'singleJson' &&
+        data.consumerResultPolicy.resultContract ===
+          data.personalInsight.resultContract &&
+        data.consumerResultPolicy.maxBytes === data.personalInsight.maxResultBytes &&
+        data.maxJobDuration === data.personalInsight.maxJobDuration &&
+        !data.free),
+    {
+      message:
+        'Personal Insight environments require fixed networkless execution, exact bounded result policy and duration, and no public free tier'
+    }
+  )
+  .refine(
+    (data) =>
+      !data.personalInsight ||
+      (data.resources?.length === 3 &&
+        ['cpu', 'disk', 'ram'].every(
+          (id) => data.resources?.filter((resource) => resource.id === id).length === 1
+        )),
+    {
+      message:
+        'Personal Insight environments require exactly one cpu, ram and disk resource'
     }
   )
   .refine(
@@ -350,6 +495,9 @@ export const C2DEnvironmentConfigSchema = z
   )
   .refine((data) => !data.privateDataset || data.storageExpiry === 14 * 24 * 60 * 60, {
     message: 'Private dataset aggregate results require exactly 14 days retention'
+  })
+  .refine((data) => !data.personalInsight || data.storageExpiry === 14 * 24 * 60 * 60, {
+    message: 'Personal Insight results require exactly 14 days retention'
   })
   .refine((data) => data.storageExpiry >= data.maxJobDuration, {
     message: '"storageExpiry" should be greater than "maxJobDuration"'
@@ -389,6 +537,16 @@ export const C2DDockerConfigSchema = z.array(
           path: ['scanImageRejectSeverities'],
           message:
             'scanImageRejectSeverities must be a non-empty list when scanImages is true'
+        })
+      }
+      if (
+        data.environments.some((environment) => environment.personalInsight) &&
+        (!data.scanImages || !data.scanImageRejectSeverities?.length)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['scanImages'],
+          message: 'Personal Insight environments require fail-closed image scanning'
         })
       }
     })

@@ -176,7 +176,7 @@ export class C2DDatabase extends AbstractDatabase {
 
     let cleaned = 0
     for (const engine of allEngines) {
-      const engineEnvironments = await engine.getComputeEnvironments()
+      const engineEnvironments = await engine.getMaintenanceEnvironments()
       for (const computeEnvironment of engineEnvironments) {
         allEnvironments.push(computeEnvironment)
         const finishedOrExpired: DBComputeJob[] = await this.provider.getFinishedJobs([

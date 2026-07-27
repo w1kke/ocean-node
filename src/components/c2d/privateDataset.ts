@@ -139,26 +139,42 @@ function requiredHeader(value: unknown, pattern: RegExp, code: string): string {
   return value
 }
 
-export async function downloadPrivateDataset(
+export function downloadPrivateDataset(
   file: UrlFileObject,
   destination: string,
   jobId: string,
   policy: PrivateDatasetPolicy,
   environment: NodeJS.ProcessEnv = process.env
 ): Promise<{ bytes: number; checksum: string }> {
+  if (!JOB_ID.test(jobId)) {
+    throw new PrivateDatasetError('private_dataset_job_id_invalid')
+  }
+  if (
+    file.type !== 'url' ||
+    file.method.toLowerCase() !== 'get' ||
+    file.url !== policy.url
+  ) {
+    throw new PrivateDatasetError('private_dataset_url_not_allowed')
+  }
+  return downloadVerifiedJson(
+    policy.url,
+    destination,
+    policy.maxBytes,
+    requestHeaders(file, jobId, policy, environment),
+    privateDatasetHttpsAgent(policy)
+  )
+}
+
+export async function downloadVerifiedJson(
+  url: string,
+  destination: string,
+  maxBytes: number,
+  headers: Record<string, string>,
+  httpsAgent?: HttpsAgent
+): Promise<{ bytes: number; checksum: string }> {
   const partial = `${destination}.part`
   let responseStream: Readable | undefined
   try {
-    if (!JOB_ID.test(jobId)) {
-      throw new PrivateDatasetError('private_dataset_job_id_invalid')
-    }
-    if (
-      file.type !== 'url' ||
-      file.method.toLowerCase() !== 'get' ||
-      file.url !== policy.url
-    ) {
-      throw new PrivateDatasetError('private_dataset_url_not_allowed')
-    }
     if (existsSync(destination)) {
       throw new PrivateDatasetError('private_dataset_destination_exists')
     }
@@ -166,9 +182,9 @@ export async function downloadPrivateDataset(
 
     const response = await axios({
       method: 'get',
-      url: file.url,
-      headers: requestHeaders(file, jobId, policy, environment),
-      httpsAgent: privateDatasetHttpsAgent(policy),
+      url,
+      headers,
+      httpsAgent,
       responseType: 'stream',
       timeout: 30000,
       maxRedirects: 0,
@@ -193,7 +209,7 @@ export async function downloadPrivateDataset(
       'private_dataset_content_length_invalid'
     )
     const declaredBytes = Number(contentLengthText)
-    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > policy.maxBytes) {
+    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > maxBytes) {
       throw new PrivateDatasetError('private_dataset_too_large')
     }
     const expectedChecksum = requiredHeader(
@@ -208,7 +224,7 @@ export async function downloadPrivateDataset(
       transform(chunk: Buffer, _encoding, callback) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
         bytes += buffer.length
-        if (bytes > policy.maxBytes) {
+        if (bytes > maxBytes) {
           callback(new PrivateDatasetError('private_dataset_too_large'))
           return
         }

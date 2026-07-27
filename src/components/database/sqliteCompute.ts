@@ -69,7 +69,9 @@ function getInternalStructure(job: DBComputeJob): any {
     participantValueRequired: job.participantValueRequired,
     participantValueRequest: job.participantValueRequest,
     privateResultRetention: job.privateResultRetention,
-    privateInputChecksum: job.privateInputChecksum
+    privateInputChecksum: job.privateInputChecksum,
+    personalInsightRunId: job.personalInsightRunId,
+    personalInsightState: job.personalInsightState
   }
   return internalBlob
 }

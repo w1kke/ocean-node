@@ -134,6 +134,28 @@ export interface PrivateDatasetPolicy {
   }
 }
 
+export interface PersonalInsightPolicy {
+  crabUrl: string
+  approvedAlgorithmImage: string
+  bearerTokenEnv: string
+  bffBearerTokenEnv: string
+  ramWorkspaceRoot: string
+  inputSchema: 'brainstem.personal-resting-rr/v1'
+  inputPolicy: 'brainstem.personal-resting-rr/latest-16/v1'
+  resultContract: 'brainstem.c2d-result/v1'
+  resultProfile: 'brainstem.personal-resting-heart-overview/v1'
+  audience: 'brainstem-ocean-node'
+  maxInputBytes: number
+  maxResultBytes: number
+  maxJobDuration: number
+  resources: {
+    cpu: number
+    ram: number
+  }
+  allowInsecureLocalProof?: boolean
+  tls?: PrivateDatasetPolicy['tls']
+}
+
 export interface ComputeEnvironmentBaseConfig {
   description?: string // v1
   storageExpiry?: number // amount of seconds for storage
@@ -182,6 +204,7 @@ export interface C2DEnvironmentConfig {
   enableNetwork?: boolean // whether network is enabled for algorithm containers
   consumerResultPolicy: ConsumerResultPolicy
   privateDataset?: PrivateDatasetPolicy
+  personalInsight?: PersonalInsightPolicy
 }
 
 export type ImageScanSeverity = 'UNKNOWN' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
@@ -424,6 +447,8 @@ export interface DBComputeJob extends ComputeJob {
   participantValueRequest?: ParticipantValueRequest
   privateResultRetention?: DBPrivateResultRetention
   privateInputChecksum?: string
+  personalInsightRunId?: string
+  personalInsightState?: 'pending' | 'complete' | 'rejected'
   metadata?: DBComputeJobMetadata
   additionalViewers?: string[] // addresses of additional addresses that can get results
   algoDuration: number // duration of the job in seconds

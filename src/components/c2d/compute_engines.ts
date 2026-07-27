@@ -150,4 +150,43 @@ export class C2DEngines {
     }
     return response
   }
+
+  private getPersonalInsightEngine(): C2DEngineDocker {
+    const engines = this.engines.filter(
+      (engine): engine is C2DEngineDocker =>
+        engine instanceof C2DEngineDocker && engine.hasPersonalInsight()
+    )
+    if (engines.length !== 1) throw new Error('Personal Insight is unavailable')
+    return engines[0]
+  }
+
+  startPersonalInsight(grant: string): Promise<{ runId: string }> {
+    return this.getPersonalInsightEngine().startPersonalInsight(grant)
+  }
+
+  getPersonalInsightStatus(
+    runId: string,
+    capability: string
+  ): Promise<{ status: 'queued' | 'running' | 'complete' | 'failed' }> {
+    return this.getPersonalInsightEngine().getPersonalInsightStatus(runId, capability)
+  }
+
+  getPersonalInsightResult(
+    runId: string,
+    capability: string
+  ): Promise<{ bytes: Buffer; checksum: string }> {
+    return this.getPersonalInsightEngine().getPersonalInsightResult(runId, capability)
+  }
+
+  revalidatePersonalInsight(
+    grant: string,
+    runId: string,
+    authorization: string
+  ): Promise<void> {
+    return this.getPersonalInsightEngine().revalidatePersonalInsight(
+      grant,
+      runId,
+      authorization
+    )
+  }
 }

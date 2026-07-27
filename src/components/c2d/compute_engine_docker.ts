@@ -26,6 +26,7 @@ import type {
   ComputeResourcesPricingInfo,
   ConsumerResultPolicy,
   PrivateDatasetPolicy,
+  PersonalInsightPolicy,
   ImageScanSeverity,
   DBSettlementIntent,
   DBSettlementStatus
@@ -54,7 +55,7 @@ import {
   renameSync,
   readFileSync
 } from 'fs'
-import { createHash } from 'crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import { pipeline } from 'node:stream/promises'
 import { CORE_LOGGER } from '../../utils/logging/common.js'
 import { ENVIRONMENT_VARIABLES } from '../../utils/constants.js'
@@ -91,6 +92,20 @@ import {
   ParticipantValueError,
   prepareParticipantValue
 } from './participantValue.js'
+import {
+  assertPersonalInsightConfiguration,
+  claimPersonalInsightGrant,
+  completePersonalInsightRun,
+  consumePersonalInsightCapability,
+  downloadPersonalInsightDataset,
+  PersonalInsightError,
+  prepareRamWorkspace,
+  purgeRamWorkspace,
+  revalidatePersonalInsightRun,
+  resetRamWorkspaceRoot,
+  validatePersonalInsightInput,
+  validatePersonalInsightResult
+} from './personalInsight.js'
 
 const C2D_CONTAINER_UID = 1000
 const C2D_CONTAINER_GID = 1000
@@ -106,7 +121,8 @@ export function createComputeEnvironmentId(
   fees: ComputeEnvFeesStructure,
   resultPolicy: ConsumerResultPolicy,
   suffix: string,
-  privateDataset?: PrivateDatasetPolicy
+  privateDataset?: PrivateDatasetPolicy,
+  personalInsight?: PersonalInsightPolicy
 ): string {
   return (
     clusterHash +
@@ -115,6 +131,7 @@ export function createComputeEnvironmentId(
       JSON.stringify(fees) +
         JSON.stringify(resultPolicy) +
         (privateDataset ? JSON.stringify(privateDataset) : '') +
+        (personalInsight ? JSON.stringify(personalInsight) : '') +
         suffix
     )
   )
@@ -123,6 +140,9 @@ export function createComputeEnvironmentId(
 export class C2DEngineDocker extends C2DEngine {
   private envs: ComputeEnvironment[] = []
   private privateDatasetPolicies: Map<string, PrivateDatasetPolicy> = new Map()
+  private personalInsightPolicies: Map<string, PersonalInsightPolicy> = new Map()
+  private personalInsightGrants: Map<string, string> = new Map()
+  private pendingPersonalRuns: Map<string, string> = new Map()
 
   public docker: Dockerode
   private cronTimer: any
@@ -463,12 +483,21 @@ export class C2DEngineDocker extends C2DEngine {
         env.fees,
         env.consumerResultPolicy,
         envIdSuffix,
-        envDef.privateDataset
+        envDef.privateDataset,
+        envDef.personalInsight
       )
 
       if (envDef.privateDataset) {
         assertPrivateDatasetConfiguration(envDef.privateDataset)
         this.privateDatasetPolicies.set(env.id, envDef.privateDataset)
+      }
+      if (envDef.personalInsight) {
+        if (!this.scanImages) {
+          throw new Error('Personal Insight requires fail-closed image scanning')
+        }
+        assertPersonalInsightConfiguration(envDef.personalInsight)
+        resetRamWorkspaceRoot(envDef.personalInsight)
+        this.personalInsightPolicies.set(env.id, envDef.personalInsight)
       }
 
       this.envs.push(env)
@@ -1081,6 +1110,7 @@ export class C2DEngineDocker extends C2DEngine {
     const filteredEnvs = []
     // const systemInfo = this.docker ? await this.docker.info() : null
     for (const env of this.envs) {
+      if (this.personalInsightPolicies.has(env.id)) continue
       if (!chainId || (env.fees && Object.hasOwn(env.fees, String(chainId)))) {
         const computeEnv = JSON.parse(JSON.stringify(env))
 
@@ -1131,6 +1161,19 @@ export class C2DEngineDocker extends C2DEngine {
     }
 
     return filteredEnvs
+  }
+
+  public override getMaintenanceEnvironments(): Promise<ComputeEnvironment[]> {
+    return Promise.resolve(JSON.parse(JSON.stringify(this.envs)))
+  }
+
+  protected override getJobEnvironment(job: DBComputeJob): Promise<ComputeEnvironment> {
+    if (this.personalInsightPolicies.has(job.environment)) {
+      return Promise.resolve(
+        this.envs.find((environment) => environment.id === job.environment) ?? null
+      )
+    }
+    return super.getJobEnvironment(job)
   }
 
   private parseImage(image: string) {
@@ -1331,6 +1374,227 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  public async startPersonalInsight(grant: string): Promise<{ runId: string }> {
+    if (this.personalInsightPolicies.size !== 1) {
+      throw new PersonalInsightError('personal_insight_unavailable')
+    }
+    const [environment, policy] = [...this.personalInsightPolicies.entries()][0]
+    const jobId = randomBytes(32).toString('hex')
+    const runId = randomBytes(16).toString('hex')
+    const at = policy.approvedAlgorithmImage.lastIndexOf('@')
+    const image = policy.approvedAlgorithmImage.slice(0, at)
+    const checksum = policy.approvedAlgorithmImage.slice(at + 1)
+    const algorithm = {
+      meta: { container: { image, tag: '', checksum, entrypoint: '' } },
+      envs: { ALGORITHM_IMAGE_DIGEST: checksum }
+    } as unknown as ComputeAlgorithm
+    const assets = [
+      {
+        fileObject: {
+          type: 'url',
+          url: new URL(
+            '/api/v1/internal/personal-insights/dataset',
+            policy.crabUrl
+          ).toString(),
+          method: 'GET'
+        }
+      }
+    ] as unknown as ComputeAsset[]
+
+    this.pendingPersonalRuns.set(jobId, runId)
+    try {
+      await claimPersonalInsightGrant(policy, grant, jobId, runId)
+      this.personalInsightGrants.set(jobId, grant)
+      const jobs = await this.startComputeJob(
+        assets,
+        algorithm,
+        null,
+        environment,
+        this.keyManager.getEthAddress(),
+        policy.maxJobDuration,
+        [
+          { id: 'cpu', amount: policy.resources.cpu },
+          { id: 'ram', amount: policy.resources.ram },
+          { id: 'disk', amount: 0 }
+        ],
+        null,
+        jobId,
+        undefined,
+        [],
+        0
+      )
+      if (jobs.length !== 1) {
+        throw new PersonalInsightError('personal_insight_start_failed')
+      }
+      return { runId }
+    } catch (error) {
+      this.personalInsightGrants.delete(jobId)
+      throw error
+    } finally {
+      this.pendingPersonalRuns.delete(jobId)
+    }
+  }
+
+  public hasPersonalInsight(): boolean {
+    return this.personalInsightPolicies.size === 1
+  }
+
+  private async getPersonalInsightJob(runId: string): Promise<DBComputeJob | null> {
+    if (!/^[0-9a-f]{32}$/.test(runId)) return null
+    const jobs = await this.db.getJobs([...this.personalInsightPolicies.keys()])
+    const matches = jobs.filter(
+      (job) =>
+        job.personalInsightRunId === runId &&
+        this.personalInsightPolicies.has(job.environment)
+    )
+    return matches.length === 1 ? matches[0] : null
+  }
+
+  private async rejectPersonalInsightJob(job: DBComputeJob): Promise<void> {
+    const needsCleanup =
+      job.isRunning ||
+      job.privateResultRetention?.cleanupState !== 'complete' ||
+      existsSync(path.join(this.getStoragePath(), job.jobId))
+    job.stopRequested = true
+    job.isRunning = false
+    job.dateFinished ||= String(Math.floor(Date.now() / 1000))
+    job.status = C2DStatusNumber.ResultsFetchFailed
+    job.statusText = C2DStatusText.ResultsFetchFailed
+    job.personalInsightState = 'rejected'
+    job.resultValidation = undefined
+    job.additionalViewers = []
+    delete job.privateInputChecksum
+    if (job.privateResultRetention) {
+      job.privateResultRetention.resultDeletedAt ??= Math.floor(Date.now() / 1000)
+      delete job.privateResultRetention.inputChecksum
+      delete job.privateResultRetention.resultChecksum
+    }
+    rmSync(this.getRetainedPrivateResultDirectory(job), {
+      recursive: true,
+      force: true
+    })
+    purgeRamWorkspace(this.personalInsightPolicies.get(job.environment), job.jobId)
+    this.personalInsightGrants.delete(job.jobId)
+    await this.db.updateJob(job)
+    if (needsCleanup) await this.cleanupJob(job)
+  }
+
+  private async authorizePersonalInsightRead(
+    runId: string,
+    capability: string,
+    action: 'status' | 'result'
+  ): Promise<{ job: DBComputeJob; checksum: string | null }> {
+    const job = await this.getPersonalInsightJob(runId)
+    if (!job || job.personalInsightState === 'rejected') {
+      throw new PersonalInsightError('personal_insight_not_found')
+    }
+    const policy = this.personalInsightPolicies.get(job.environment)
+    try {
+      const checksum = await consumePersonalInsightCapability(
+        policy,
+        capability,
+        runId,
+        action
+      )
+      return { job, checksum }
+    } catch (error) {
+      if (error instanceof PersonalInsightError && error.terminal) {
+        await this.rejectPersonalInsightJob(job)
+      }
+      throw error
+    }
+  }
+
+  public async getPersonalInsightStatus(
+    runId: string,
+    capability: string
+  ): Promise<{ status: 'queued' | 'running' | 'complete' | 'failed' }> {
+    const { job } = await this.authorizePersonalInsightRead(runId, capability, 'status')
+    if (
+      job.personalInsightState === 'complete' &&
+      job.privateResultRetention?.cleanupState === 'complete' &&
+      !job.privateResultRetention.resultDeletedAt &&
+      this.retainedPrivateResultIsValid(job)
+    ) {
+      return { status: 'complete' }
+    }
+    if (job.personalInsightState === 'rejected' || (!job.isRunning && job.dateFinished)) {
+      return { status: 'failed' }
+    }
+    return {
+      status:
+        job.status === C2DStatusNumber.JobQueued ||
+        job.status === C2DStatusNumber.JobStarted
+          ? 'queued'
+          : 'running'
+    }
+  }
+
+  public async getPersonalInsightResult(
+    runId: string,
+    capability: string
+  ): Promise<{ bytes: Buffer; checksum: string }> {
+    const { job, checksum } = await this.authorizePersonalInsightRead(
+      runId,
+      capability,
+      'result'
+    )
+    const retained = job.privateResultRetention
+    if (
+      job.personalInsightState !== 'complete' ||
+      retained?.cleanupState !== 'complete' ||
+      retained.resultDeletedAt ||
+      !retained.resultChecksum ||
+      checksum !== retained.resultChecksum ||
+      !this.retainedPrivateResultIsValid(job)
+    ) {
+      throw new PersonalInsightError('personal_insight_not_found')
+    }
+    const bytes = readFileSync(this.getRetainedPrivateResultPath(job))
+    validatePersonalInsightResult(
+      bytes,
+      this.personalInsightPolicies.get(job.environment)
+    )
+    if (
+      !timingSafeEqual(
+        Buffer.from(createHash('sha256').update(bytes).digest('hex'), 'hex'),
+        Buffer.from(checksum, 'hex')
+      )
+    ) {
+      throw new PersonalInsightError('personal_insight_not_found')
+    }
+    return { bytes, checksum }
+  }
+
+  public async revalidatePersonalInsight(
+    grant: string,
+    runId: string,
+    authorization: string
+  ): Promise<void> {
+    const job = await this.getPersonalInsightJob(runId)
+    if (!job) throw new PersonalInsightError('personal_insight_not_found')
+    const policy = this.personalInsightPolicies.get(job.environment)
+    const expectedAuthorization = `Bearer ${process.env[policy.bffBearerTokenEnv] ?? ''}`
+    const provided = Buffer.from(authorization, 'utf8')
+    const expected = Buffer.from(expectedAuthorization, 'utf8')
+    if (
+      authorization.length > 512 ||
+      provided.length !== expected.length ||
+      !timingSafeEqual(provided, expected)
+    ) {
+      throw new PersonalInsightError('personal_insight_not_found')
+    }
+    try {
+      await revalidatePersonalInsightRun(policy, grant, job.jobId, runId)
+    } catch (error) {
+      if (error instanceof PersonalInsightError && error.terminal) {
+        await this.rejectPersonalInsightJob(job)
+        return
+      }
+      throw error
+    }
+  }
+
   // eslint-disable-next-line require-await
   public override async startComputeJob(
     assets: ComputeAsset[],
@@ -1359,11 +1623,14 @@ export class C2DEngineDocker extends C2DEngine {
     }
 
     const envIdWithHash = environment && environment.indexOf('-') > -1
-    const env = await this.getComputeEnvironment(
-      payment && payment.chainId ? payment.chainId : null,
-      envIdWithHash ? environment : null,
-      environment
-    )
+    const personalRunId = this.pendingPersonalRuns.get(jobId)
+    const env = personalRunId
+      ? this.envs.find((candidate) => candidate.id === environment)
+      : await this.getComputeEnvironment(
+          payment && payment.chainId ? payment.chainId : null,
+          envIdWithHash ? environment : null,
+          environment
+        )
     if (!env) {
       throw new Error(`Invalid environment ${environment}`)
     }
@@ -1379,6 +1646,62 @@ export class C2DEngineDocker extends C2DEngine {
       )
     }
     const privateDatasetPolicy = this.privateDatasetPolicies.get(env.id)
+    const personalInsightPolicy = this.personalInsightPolicies.get(env.id)
+    if (personalRunId && !personalInsightPolicy) {
+      throw new PersonalInsightError('personal_insight_start_invalid')
+    }
+    if (personalInsightPolicy) {
+      const expectedDatasetUrl = new URL(
+        '/api/v1/internal/personal-insights/dataset',
+        personalInsightPolicy.crabUrl
+      ).toString()
+      const expectedAlgorithm = {
+        meta: {
+          container: {
+            image: personalInsightPolicy.approvedAlgorithmImage.split('@')[0],
+            tag: '',
+            checksum: personalInsightPolicy.approvedAlgorithmImage.split('@')[1],
+            entrypoint: ''
+          }
+        },
+        envs: {
+          ALGORITHM_IMAGE_DIGEST:
+            personalInsightPolicy.approvedAlgorithmImage.split('@')[1]
+        }
+      }
+      const expectedAssets = [
+        {
+          fileObject: {
+            type: 'url',
+            url: expectedDatasetUrl,
+            method: 'GET'
+          }
+        }
+      ]
+      const expectedResources = [
+        { id: 'cpu', amount: personalInsightPolicy.resources.cpu },
+        { id: 'ram', amount: personalInsightPolicy.resources.ram },
+        { id: 'disk', amount: 0 }
+      ]
+      if (
+        !personalRunId ||
+        !this.personalInsightGrants.has(jobId) ||
+        image !== personalInsightPolicy.approvedAlgorithmImage ||
+        JSON.stringify(algorithm) !== JSON.stringify(expectedAlgorithm) ||
+        JSON.stringify(assets) !== JSON.stringify(expectedAssets) ||
+        output !== null ||
+        owner !== this.keyManager.getEthAddress() ||
+        maxJobDuration !== personalInsightPolicy.maxJobDuration ||
+        JSON.stringify(resources) !== JSON.stringify(expectedResources) ||
+        payment !== null ||
+        metadata !== undefined ||
+        additionalViewers?.length !== 0 ||
+        queueMaxWaitTime !== 0 ||
+        encryptedDockerRegistryAuth !== undefined
+      ) {
+        throw new PersonalInsightError('personal_insight_start_invalid')
+      }
+    }
     if (privateDatasetPolicy) {
       assertPrivateDatasetJob(privateDatasetPolicy, image, assets.length, Boolean(output))
     }
@@ -1449,6 +1772,10 @@ export class C2DEngineDocker extends C2DEngine {
       output,
       buildStartTimestamp: '0',
       buildStopTimestamp: '0'
+    }
+    if (personalRunId) {
+      job.personalInsightRunId = personalRunId
+      job.personalInsightState = 'pending'
     }
 
     if (algorithm.meta.container && algorithm.meta.container.dockerfile) {
@@ -1563,7 +1890,9 @@ export class C2DEngineDocker extends C2DEngine {
     agreementId?: string,
     jobId?: string
   ): Promise<ComputeJob[]> {
-    const jobs = await this.db.getJob(jobId, agreementId, consumerAddress)
+    const jobs = (await this.db.getJob(jobId, agreementId, consumerAddress)).filter(
+      (job) => !this.personalInsightPolicies.has(job.environment)
+    )
     if (jobs.length === 0) {
       return []
     }
@@ -1589,7 +1918,11 @@ export class C2DEngineDocker extends C2DEngine {
     offset: number = 0
   ): Promise<{ stream: Readable; headers: any }> {
     const jobs = await this.db.getJob(jobId, null, null)
-    if (jobs.length === 0 || jobs.length > 1) {
+    if (
+      jobs.length === 0 ||
+      jobs.length > 1 ||
+      this.personalInsightPolicies.has(jobs[0].environment)
+    ) {
       throw new Error(`Cannot find job with id ${jobId}`)
     }
     const normalizedConsumer = consumerAddress.toLowerCase()
@@ -1913,6 +2246,7 @@ export class C2DEngineDocker extends C2DEngine {
       // get environment-specific resources for Docker device/hardware configuration
       const env = this.envs.find((e) => e.id === job.environment)
       const envResource = env?.resources || []
+      const personalInsightPolicy = this.personalInsightPolicies.get(job.environment)
       const volume: VolumeCreateOptions = {
         Name: job.jobId + '-volume'
       }
@@ -1925,7 +2259,8 @@ export class C2DEngineDocker extends C2DEngine {
           type: 'local'
         }
       } */
-      const volumeCreated = await this.createDockerVolume(volume, true)
+      const volumeCreated =
+        Boolean(personalInsightPolicy) || (await this.createDockerVolume(volume, true))
       if (!volumeCreated) {
         job.status = C2DStatusNumber.VolumeCreationFailed
         job.statusText = C2DStatusText.VolumeCreationFailed
@@ -1941,14 +2276,30 @@ export class C2DEngineDocker extends C2DEngine {
       const hostConfig: HostConfig = {
         // limit number of Pids container can spawn, to avoid flooding
         PidsLimit: 512,
-        Mounts: [
-          {
-            Type: 'volume',
-            Source: volume.Name,
-            Target: '/data',
-            ReadOnly: false
-          }
-        ]
+        Mounts: personalInsightPolicy
+          ? [
+              {
+                Type: 'tmpfs',
+                Source: '',
+                Target: '/data',
+                ReadOnly: false,
+                TmpfsOptions: {
+                  Mode: 0o1777,
+                  SizeBytes:
+                    personalInsightPolicy.maxInputBytes +
+                    personalInsightPolicy.maxResultBytes +
+                    1024 * 1024
+                }
+              }
+            ]
+          : [
+              {
+                Type: 'volume',
+                Source: volume.Name,
+                Target: '/data',
+                ReadOnly: false
+              }
+            ]
       }
       if (!env.enableNetwork) {
         hostConfig.NetworkMode = 'none' // no network inside the container
@@ -1986,16 +2337,22 @@ export class C2DEngineDocker extends C2DEngine {
         OpenStdin: false,
         StdinOnce: false,
         User: `${C2D_CONTAINER_UID}:${C2D_CONTAINER_GID}`,
-        Volumes: mountVols,
+        WorkingDir: '/data',
+        Volumes: personalInsightPolicy ? undefined : mountVols,
         HostConfig: hostConfig
       }
+      if (personalInsightPolicy) containerInfo.HostConfig.ReadonlyRootfs = true
       // TO DO - iterate over resources and get default runtime
       // TO DO - check resources and pass devices
-      const dockerDeviceRequest = this.getDockerDeviceRequest(job.resources, envResource)
+      const dockerDeviceRequest = personalInsightPolicy
+        ? null
+        : this.getDockerDeviceRequest(job.resources, envResource)
       if (dockerDeviceRequest) {
         containerInfo.HostConfig.DeviceRequests = dockerDeviceRequest
       }
-      const advancedConfig = this.getDockerAdvancedConfig(job.resources, envResource)
+      const advancedConfig: any = personalInsightPolicy
+        ? {}
+        : this.getDockerAdvancedConfig(job.resources, envResource)
       if (advancedConfig.Devices)
         containerInfo.HostConfig.Devices = advancedConfig.Devices
       if (advancedConfig.GroupAdd)
@@ -2275,6 +2632,10 @@ export class C2DEngineDocker extends C2DEngine {
             singleJsonResult,
             resultPolicy
           )
+          const personalPolicy = this.personalInsightPolicies.get(job.environment)
+          if (personalPolicy) {
+            validatePersonalInsightResult(singleJsonResult, personalPolicy)
+          }
         } catch (e) {
           CORE_LOGGER.error('Failed to validate result.json: ' + e.message)
           job.status = C2DStatusNumber.ResultsFetchFailed
@@ -2542,6 +2903,7 @@ export class C2DEngineDocker extends C2DEngine {
   private isPrivateJob(job: DBComputeJob): boolean {
     return Boolean(
       this.privateDatasetPolicies.has(job.environment) ||
+      this.personalInsightPolicies.has(job.environment) ||
       job.privateResultRetention ||
       job.privateInputChecksum
     )
@@ -2624,9 +2986,10 @@ export class C2DEngineDocker extends C2DEngine {
     }
 
     const policy = this.privateDatasetPolicies.get(job.environment)
+    const personalPolicy = this.personalInsightPolicies.get(job.environment)
     const algorithmImageDigest =
       job.privateResultRetention?.algorithmImageDigest ||
-      policy?.approvedAlgorithmImage.split('@').at(-1)
+      (policy ?? personalPolicy)?.approvedAlgorithmImage.split('@').at(-1)
     if (!algorithmImageDigest || !/^sha256:[0-9a-f]{64}$/.test(algorithmImageDigest)) {
       CORE_LOGGER.error('Private result cleanup deferred: algorithm digest unavailable')
       return false
@@ -2685,6 +3048,36 @@ export class C2DEngineDocker extends C2DEngine {
         }
         job.privateResultRetention.resultChecksum = resultChecksum
         job.privateResultRetention.retainedAt = Math.floor(Date.now() / 1000)
+
+        if (personalPolicy && job.personalInsightState !== 'complete') {
+          const grant = this.personalInsightGrants.get(job.jobId)
+          if (!grant || !job.personalInsightRunId) {
+            job.personalInsightState = 'rejected'
+            rmSync(retainedResultPath, { force: true })
+            delete job.privateResultRetention.resultChecksum
+          } else {
+            try {
+              await completePersonalInsightRun(
+                personalPolicy,
+                grant,
+                job.jobId,
+                job.personalInsightRunId,
+                resultChecksum
+              )
+              job.personalInsightState = 'complete'
+            } catch (error) {
+              if (error instanceof PersonalInsightError && error.terminal) {
+                job.personalInsightState = 'rejected'
+                rmSync(retainedResultPath, { force: true })
+                delete job.privateResultRetention.resultChecksum
+              } else {
+                throw error
+              }
+            }
+          }
+        }
+      } else if (personalPolicy) {
+        job.personalInsightState = 'rejected'
       }
 
       rmSync(originalJobDirectory, { recursive: true, force: true })
@@ -2699,6 +3092,7 @@ export class C2DEngineDocker extends C2DEngine {
       }
       if (!runtimeCleanupSucceeded) throw new Error('private_runtime_cleanup_failed')
 
+      if (personalPolicy) this.personalInsightGrants.delete(job.jobId)
       job.privateResultRetention.cleanupState = 'complete'
       delete job.privateResultRetention.cleanupErrorCode
       if ((await this.db.updateJob(job)) !== 1) {
@@ -2715,10 +3109,34 @@ export class C2DEngineDocker extends C2DEngine {
   }
 
   private async recoverPrivateJobMaterial(): Promise<void> {
-    const privateEnvironmentIds = [...this.privateDatasetPolicies.keys()]
+    const personalEnvironmentIds = [...this.personalInsightPolicies.keys()]
+    if (personalEnvironmentIds.length > 0) {
+      for (const job of await this.db.getJobs(personalEnvironmentIds)) {
+        if (job.personalInsightState !== 'complete') {
+          await this.rejectPersonalInsightJob(job)
+        }
+      }
+    }
+
+    const privateEnvironmentIds = [
+      ...this.privateDatasetPolicies.keys(),
+      ...personalEnvironmentIds
+    ]
     if (privateEnvironmentIds.length === 0) return
     const jobs = await this.db.getFinishedJobs(privateEnvironmentIds)
     for (const job of jobs) {
+      if (
+        this.personalInsightPolicies.has(job.environment) &&
+        job.personalInsightState !== 'complete'
+      ) {
+        if (
+          job.privateResultRetention?.cleanupState !== 'complete' ||
+          existsSync(path.join(this.getStoragePath(), job.jobId))
+        ) {
+          await this.cleanupJob(job)
+        }
+        continue
+      }
       const originalJobDirectory = path.join(this.getStoragePath(), job.jobId)
       if (
         job.privateResultRetention?.cleanupState === 'complete' &&
@@ -2806,6 +3224,8 @@ export class C2DEngineDocker extends C2DEngine {
           e.message
       )
     }
+    const personalPolicy = this.personalInsightPolicies.get(job.environment)
+    if (personalPolicy) purgeRamWorkspace(personalPolicy, job.jobId)
     if (privateJob) {
       return await this.cleanupPrivateJobMaterial(job, runtimeCleanupSucceeded)
     }
@@ -3211,6 +3631,62 @@ export class C2DEngineDocker extends C2DEngine {
     return filesObject
   }
 
+  private async uploadPersonalInsightData(
+    job: DBComputeJob,
+    policy: PersonalInsightPolicy,
+    configLogPath: string
+  ): Promise<{ status: C2DStatusNumber; statusText: C2DStatusText }> {
+    const grant = this.personalInsightGrants.get(job.jobId)
+    if (!grant || job.personalInsightState !== 'pending') {
+      return {
+        status: C2DStatusNumber.DataProvisioningFailed,
+        statusText: C2DStatusText.DataProvisioningFailed
+      }
+    }
+    const workspace = prepareRamWorkspace(policy, job.jobId)
+    const datasetPath = path.join(workspace, 'dataset.json')
+    try {
+      appendFileSync(configLogPath, 'Downloading verified personal dataset\n')
+      const provisioned = await downloadPersonalInsightDataset(
+        policy,
+        grant,
+        job.jobId,
+        datasetPath
+      )
+      job.privateInputChecksum = provisioned.checksum
+      const dataset = readFileSync(datasetPath)
+      validatePersonalInsightInput(dataset)
+      const archive = tarStream.pack()
+      archive.entry({ name: 'inputs/', type: 'directory', mode: 0o700 })
+      archive.entry(
+        { name: 'inputs/dataset.json', type: 'file', mode: 0o400, size: dataset.length },
+        dataset
+      )
+      archive.entry({ name: 'outputs/', type: 'directory', mode: 0o700 })
+      archive.finalize()
+      await this.docker
+        .getContainer(job.jobId + '-algoritm')
+        .putArchive(archive as unknown as NodeJS.ReadableStream, { path: '/data' })
+      return {
+        status: C2DStatusNumber.RunningAlgorithm,
+        statusText: C2DStatusText.RunningAlgorithm
+      }
+    } catch (error) {
+      CORE_LOGGER.error(
+        `Unable to provision personal dataset: ${
+          error instanceof Error ? error.message : 'unknown'
+        }`
+      )
+      appendFileSync(configLogPath, 'Unable to provision personal dataset\n')
+      return {
+        status: C2DStatusNumber.DataProvisioningFailed,
+        statusText: C2DStatusText.DataProvisioningFailed
+      }
+    } finally {
+      purgeRamWorkspace(policy, job.jobId)
+    }
+  }
+
   private async uploadData(
     job: DBComputeJob
   ): Promise<{ status: C2DStatusNumber; statusText: C2DStatusText }> {
@@ -3236,6 +3712,11 @@ export class C2DEngineDocker extends C2DEngine {
       }
     }
     const privateDatasetPolicy = this.privateDatasetPolicies.get(jobEnvironment.id)
+    const personalInsightPolicy = this.personalInsightPolicies.get(jobEnvironment.id)
+
+    if (personalInsightPolicy) {
+      return this.uploadPersonalInsightData(job, personalInsightPolicy, configLogPath)
+    }
 
     try {
       appendFileSync(

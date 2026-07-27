@@ -16,6 +16,7 @@ import { authRoutes } from './auth.js'
 import { adminConfigRoutes } from './adminConfig.js'
 import { persistentStorageRoutes } from './persistentStorage.js'
 import { accessListRoutes } from './accessList.js'
+import { personalInsightRoutes } from './personalInsight.js'
 
 export * from './getOceanPeers.js'
 export * from './auth.js'
@@ -53,6 +54,7 @@ httpRoutes.use(aquariusRoutes)
 httpRoutes.use(rootEndpointRoutes)
 // /api/services/computeEnvironments
 httpRoutes.use(computeRoutes)
+httpRoutes.use(personalInsightRoutes)
 // queue routes
 httpRoutes.use(queueRoutes)
 // running jobs

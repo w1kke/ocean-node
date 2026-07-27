@@ -69,6 +69,10 @@ export abstract class C2DEngine {
   // functions which need to be implemented by all engine types
   public abstract getComputeEnvironments(chainId?: number): Promise<ComputeEnvironment[]>
 
+  public getMaintenanceEnvironments(): Promise<ComputeEnvironment[]> {
+    return this.getComputeEnvironments()
+  }
+
   // overwritten by classes for start actions
   public start(): Promise<void> {
     return null
