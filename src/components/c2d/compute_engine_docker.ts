@@ -3175,11 +3175,17 @@ export class C2DEngineDocker extends C2DEngine {
         throw new Error('private_cleanup_completion_not_persisted')
       }
       return true
-    } catch (_error) {
+    } catch (error) {
       job.privateResultRetention.cleanupState = 'failed'
       job.privateResultRetention.cleanupErrorCode = 'private_cleanup_failed'
       await this.db.updateJob(job).catch(() => 0)
-      CORE_LOGGER.error('Private result cleanup failed; operator action required')
+      const reason =
+        error instanceof Error && /^[a-z0-9_]+$/.test(error.message)
+          ? ` (${error.message})`
+          : ''
+      CORE_LOGGER.error(
+        `Private result cleanup failed${reason}; operator action required`
+      )
       return false
     }
   }

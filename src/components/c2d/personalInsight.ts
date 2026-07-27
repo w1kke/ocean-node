@@ -249,16 +249,28 @@ export async function completePersonalInsightRun(
   ) {
     throw new PersonalInsightError('personal_insight_completion_invalid')
   }
-  const body = exactObject(
-    await postCrab(
-      policy,
-      '/api/v1/internal/personal-insights/runs/complete',
-      { grant, jobId, runId, resultSha256 },
-      environment
-    ),
-    ['result'],
-    'personal_insight_completion_invalid'
-  )
+  let response: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await postCrab(
+        policy,
+        '/api/v1/internal/personal-insights/runs/complete',
+        { grant, jobId, runId, resultSha256 },
+        environment
+      )
+      break
+    } catch (error) {
+      if (
+        !(error instanceof PersonalInsightError) ||
+        error.message !== 'personal_insight_crab_unavailable' ||
+        attempt === 2
+      ) {
+        throw error
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
+    }
+  }
+  const body = exactObject(response, ['result'], 'personal_insight_completion_invalid')
   const result = exactObject(
     body.result,
     ['status', 'resultExpiresAt'],

@@ -123,6 +123,7 @@ describe('personal Insight boundary', () => {
   let requests: Array<{ url: string; authorization: string; body: any; headers: any }>
   let revalidationStatus: number
   let capabilityStatus: number
+  let completionConnectionFailures: number
 
   beforeEach(async () => {
     process.env.PERSONAL_INSIGHT_TEST_TOKEN = 'generated-personal-test-token-long-enough'
@@ -130,6 +131,7 @@ describe('personal Insight boundary', () => {
     requests = []
     revalidationStatus = 200
     capabilityStatus = 200
+    completionConnectionFailures = 0
     const dataset = Buffer.from(JSON.stringify(input()))
     server = createServer((request, response) => {
       const chunks: Buffer[] = []
@@ -163,6 +165,11 @@ describe('personal Insight boundary', () => {
           return
         }
         if (request.url?.endsWith('/runs/complete')) {
+          if (completionConnectionFailures > 0) {
+            completionConnectionFailures--
+            request.socket.destroy()
+            return
+          }
           response.writeHead(200, { 'Content-Type': 'application/json' })
           response.end(
             JSON.stringify({
@@ -321,6 +328,21 @@ describe('personal Insight boundary', () => {
     expect(() =>
       validatePersonalInsightResult(Buffer.from(JSON.stringify(wrongResult)), configured)
     ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+  })
+
+  it('retries only an idempotent completion after a lost connection', async () => {
+    completionConnectionFailures = 1
+    await completePersonalInsightRun(
+      policy(crabUrl),
+      GRANT,
+      JOB_ID,
+      RUN_ID,
+      RESULT_CHECKSUM,
+      environment
+    )
+    expect(requests.filter(({ url }) => url.endsWith('/runs/complete')).length).to.equal(
+      2
+    )
   })
 
   it('accepts only a bounded immutable image command', () => {
