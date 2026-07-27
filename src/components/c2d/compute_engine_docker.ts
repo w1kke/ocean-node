@@ -116,6 +116,25 @@ const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
 const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
 
+export function createPersonalInsightInputArchive(dataset: Buffer): tarStream.Pack {
+  const archive = tarStream.pack()
+  const owner = { uid: C2D_CONTAINER_UID, gid: C2D_CONTAINER_GID }
+  archive.entry({ name: 'inputs/', type: 'directory', mode: 0o700, ...owner })
+  archive.entry(
+    {
+      name: 'inputs/dataset.json',
+      type: 'file',
+      mode: 0o400,
+      size: dataset.length,
+      ...owner
+    },
+    dataset
+  )
+  archive.entry({ name: 'outputs/', type: 'directory', mode: 0o700, ...owner })
+  archive.finalize()
+  return archive
+}
+
 export function createComputeEnvironmentId(
   clusterHash: string,
   fees: ComputeEnvFeesStructure,
@@ -3656,14 +3675,7 @@ export class C2DEngineDocker extends C2DEngine {
       job.privateInputChecksum = provisioned.checksum
       const dataset = readFileSync(datasetPath)
       validatePersonalInsightInput(dataset)
-      const archive = tarStream.pack()
-      archive.entry({ name: 'inputs/', type: 'directory', mode: 0o700 })
-      archive.entry(
-        { name: 'inputs/dataset.json', type: 'file', mode: 0o400, size: dataset.length },
-        dataset
-      )
-      archive.entry({ name: 'outputs/', type: 'directory', mode: 0o700 })
-      archive.finalize()
+      const archive = createPersonalInsightInputArchive(dataset)
       await this.docker
         .getContainer(job.jobId + '-algoritm')
         .putArchive(archive as unknown as NodeJS.ReadableStream, { path: '/data' })

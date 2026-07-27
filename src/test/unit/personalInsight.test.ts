@@ -15,6 +15,7 @@ import {
 } from 'fs'
 import os from 'os'
 import path from 'path'
+import * as tarStream from 'tar-stream'
 import type { DBComputeJob, PersonalInsightPolicy } from '../../@types/C2D/C2D.js'
 import {
   claimPersonalInsightGrant,
@@ -26,7 +27,10 @@ import {
   validatePersonalInsightInput,
   validatePersonalInsightResult
 } from '../../components/c2d/personalInsight.js'
-import { C2DEngineDocker } from '../../components/c2d/compute_engine_docker.js'
+import {
+  createPersonalInsightInputArchive,
+  C2DEngineDocker
+} from '../../components/c2d/compute_engine_docker.js'
 import {
   C2DDockerConfigSchema,
   C2DEnvironmentConfigSchema
@@ -318,6 +322,33 @@ describe('personal Insight boundary', () => {
     expect(() =>
       validatePersonalInsightResult(Buffer.from(JSON.stringify(wrongResult)), configured)
     ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+  })
+
+  it('owns the private input archive as the unprivileged algorithm user', async () => {
+    const entries: Array<{ name: string; mode: number; uid: number; gid: number }> = []
+    const extract = tarStream.extract()
+    extract.on('entry', (header, stream, next) => {
+      entries.push({
+        name: header.name,
+        mode: header.mode!,
+        uid: header.uid!,
+        gid: header.gid!
+      })
+      stream.on('end', next)
+      stream.resume()
+    })
+    const finished = new Promise<void>((resolve, reject) => {
+      extract.on('finish', resolve)
+      extract.on('error', reject)
+    })
+    createPersonalInsightInputArchive(Buffer.from('{}')).pipe(extract)
+    await finished
+
+    expect(entries).to.deep.equal([
+      { name: 'inputs/', mode: 0o700, uid: 1000, gid: 1000 },
+      { name: 'inputs/dataset.json', mode: 0o400, uid: 1000, gid: 1000 },
+      { name: 'outputs/', mode: 0o700, uid: 1000, gid: 1000 }
+    ])
   })
 
   it('keeps the personal environment unavailable through generic compute access', async () => {
