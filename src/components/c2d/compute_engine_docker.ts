@@ -3771,7 +3771,7 @@ export class C2DEngineDocker extends C2DEngine {
       })
       stream.end(dataset)
       await completed
-      const state = await writer.inspect()
+      const state = await this.inspectCompletedExec(writer)
       if (state.Running || state.ExitCode !== 0) {
         throw new Error('personal_insight_input_write_failed')
       }
@@ -3810,7 +3810,7 @@ export class C2DEngineDocker extends C2DEngine {
         // Drain without retaining potentially sensitive algorithm output.
         if ((chunk as Buffer).length === 0) continue
       }
-      const state = await command.inspect()
+      const state = await this.inspectCompletedExec(command)
       if (timedOut || state.Running || state.ExitCode !== 0) {
         throw new Error('personal_insight_algorithm_failed')
       }
@@ -3867,11 +3867,22 @@ export class C2DEngineDocker extends C2DEngine {
       stream.once('close', resolve)
       stream.once('error', reject)
     })
-    const state = await command.inspect()
+    const state = await this.inspectCompletedExec(command)
     if (state.Running || state.ExitCode !== 0 || tooLarge || size === 0) {
       throw new Error('personal_insight_result_unavailable')
     }
     return Buffer.concat(chunks)
+  }
+
+  private async inspectCompletedExec(
+    command: Dockerode.Exec
+  ): Promise<Dockerode.ExecInspectInfo> {
+    let state = await command.inspect()
+    for (let attempt = 0; state.Running && attempt < 50; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      state = await command.inspect()
+    }
+    return state
   }
 
   private async uploadData(
