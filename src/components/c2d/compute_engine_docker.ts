@@ -119,7 +119,10 @@ const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
 export function createPersonalInsightInputArchive(dataset: Buffer): tarStream.Pack {
   const archive = tarStream.pack()
   const owner = { uid: C2D_CONTAINER_UID, gid: C2D_CONTAINER_GID }
-  archive.entry({ name: 'inputs/', type: 'directory', mode: 0o700, ...owner })
+  archive.entry(
+    { name: 'inputs/', type: 'directory', mode: 0o700, size: 0, ...owner },
+    Buffer.alloc(0)
+  )
   archive.entry(
     {
       name: 'inputs/dataset.json',
@@ -130,9 +133,50 @@ export function createPersonalInsightInputArchive(dataset: Buffer): tarStream.Pa
     },
     dataset
   )
-  archive.entry({ name: 'outputs/', type: 'directory', mode: 0o700, ...owner })
+  archive.entry(
+    { name: 'outputs/', type: 'directory', mode: 0o700, size: 0, ...owner },
+    Buffer.alloc(0)
+  )
   archive.finalize()
   return archive
+}
+
+export function getPersonalInsightImageExecution(config: {
+  Entrypoint?: string | string[] | null
+  Cmd?: string | string[] | null
+  WorkingDir?: string
+}): { command: string[]; workingDir: string } {
+  if (
+    (config.Entrypoint != null && !Array.isArray(config.Entrypoint)) ||
+    (config.Cmd != null && !Array.isArray(config.Cmd)) ||
+    (config.WorkingDir &&
+      (!config.WorkingDir.startsWith('/') ||
+        config.WorkingDir.length > 4096 ||
+        config.WorkingDir.includes('\0')))
+  ) {
+    throw new Error('personal_insight_image_command_invalid')
+  }
+  const command = [
+    ...(Array.isArray(config.Entrypoint) ? config.Entrypoint : []),
+    ...(Array.isArray(config.Cmd) ? config.Cmd : [])
+  ]
+  if (
+    command.length === 0 ||
+    command.length > 32 ||
+    command.some(
+      (argument) =>
+        typeof argument !== 'string' ||
+        argument.length === 0 ||
+        argument.length > 4096 ||
+        argument.includes('\0')
+    )
+  ) {
+    throw new Error('personal_insight_image_command_invalid')
+  }
+  return {
+    command,
+    workingDir: config.WorkingDir || '/'
+  }
 }
 
 export function createComputeEnvironmentId(
@@ -2404,6 +2448,26 @@ export class C2DEngineDocker extends C2DEngine {
         }
         containerInfo.Env = envVars
       }
+      if (personalInsightPolicy) {
+        try {
+          getPersonalInsightImageExecution(
+            (await this.docker.getImage(job.containerImage).inspect()).Config
+          )
+        } catch {
+          job.status = C2DStatusNumber.ContainerCreationFailed
+          job.statusText = C2DStatusText.ContainerCreationFailed
+          job.isRunning = false
+          job.dateFinished = String(Date.now() / 1000)
+          await this.db.updateJob(job)
+          await this.cleanupJob(job)
+          return
+        }
+        containerInfo.Entrypoint = [
+          'sleep',
+          String(personalInsightPolicy.maxJobDuration + 60)
+        ]
+        containerInfo.Cmd = []
+      }
       // persistent Storage: bind-mount bucket files into the job container (localfs backend)
       for (const i in job.assets) {
         const asset = job.assets[i]
@@ -2464,6 +2528,19 @@ export class C2DEngineDocker extends C2DEngine {
 
       const container = await this.createDockerContainer(containerInfo, true)
       if (container) {
+        if (personalInsightPolicy) {
+          try {
+            await container.start()
+          } catch {
+            job.status = C2DStatusNumber.ContainerCreationFailed
+            job.statusText = C2DStatusText.ContainerCreationFailed
+            job.isRunning = false
+            job.dateFinished = String(Date.now() / 1000)
+            await this.db.updateJob(job)
+            await this.cleanupJob(job)
+            return
+          }
+        }
         job.status = C2DStatusNumber.Provisioning
         job.statusText = C2DStatusText.Provisioning
         await this.db.updateJob(job)
@@ -2483,7 +2560,10 @@ export class C2DEngineDocker extends C2DEngine {
       const ret = await this.uploadData(job)
       job.status = ret.status
       job.statusText = ret.statusText
-      if (job.status !== C2DStatusNumber.RunningAlgorithm) {
+      const personalResultReady =
+        this.personalInsightPolicies.has(job.environment) &&
+        job.status === C2DStatusNumber.PublishingResults
+      if (job.status !== C2DStatusNumber.RunningAlgorithm && !personalResultReady) {
         // failed, let's close it
         job.isRunning = false
         job.dateFinished = String(Date.now() / 1000)
@@ -3193,7 +3273,7 @@ export class C2DEngineDocker extends C2DEngine {
             })
           )
         }
-        await container.remove()
+        await container.remove(privateJob ? { force: true } : undefined)
       }
     } catch (e) {
       if (e?.statusCode !== 404) {
@@ -3662,6 +3742,21 @@ export class C2DEngineDocker extends C2DEngine {
         statusText: C2DStatusText.DataProvisioningFailed
       }
     }
+    const container = this.docker.getContainer(job.jobId + '-algoritm')
+    let execution: { command: string[]; workingDir: string }
+    try {
+      execution = getPersonalInsightImageExecution(
+        (await this.docker.getImage(job.containerImage).inspect()).Config
+      )
+    } catch {
+      CORE_LOGGER.error('Unable to resolve the approved personal Insight command')
+      appendFileSync(configLogPath, 'Unable to resolve approved algorithm command\n')
+      return {
+        status: C2DStatusNumber.AlgorithmFailed,
+        statusText: C2DStatusText.AlgorithmFailed
+      }
+    }
+
     const workspace = prepareRamWorkspace(policy, job.jobId)
     const datasetPath = path.join(workspace, 'dataset.json')
     try {
@@ -3676,13 +3771,9 @@ export class C2DEngineDocker extends C2DEngine {
       const dataset = readFileSync(datasetPath)
       validatePersonalInsightInput(dataset)
       const archive = createPersonalInsightInputArchive(dataset)
-      await this.docker
-        .getContainer(job.jobId + '-algoritm')
-        .putArchive(archive as unknown as NodeJS.ReadableStream, { path: '/data' })
-      return {
-        status: C2DStatusNumber.RunningAlgorithm,
-        statusText: C2DStatusText.RunningAlgorithm
-      }
+      await container.putArchive(archive as unknown as NodeJS.ReadableStream, {
+        path: '/data'
+      })
     } catch (error) {
       CORE_LOGGER.error(
         `Unable to provision personal dataset: ${
@@ -3696,6 +3787,49 @@ export class C2DEngineDocker extends C2DEngine {
       }
     } finally {
       purgeRamWorkspace(policy, job.jobId)
+    }
+
+    job.isStarted = true
+    job.algoStartTimestamp = String(Date.now() / 1000)
+    let timedOut = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      container.kill().catch((): void => undefined)
+    }, policy.maxJobDuration * 1000)
+    try {
+      const command = await container.exec({
+        Cmd: execution.command,
+        User: `${C2D_CONTAINER_UID}:${C2D_CONTAINER_GID}`,
+        WorkingDir: execution.workingDir,
+        AttachStdout: true,
+        AttachStderr: true
+      })
+      const stream = await command.start({ Detach: false, Tty: false })
+      for await (const chunk of stream) {
+        // Drain without retaining potentially sensitive algorithm output.
+        if ((chunk as Buffer).length === 0) continue
+      }
+      const state = await command.inspect()
+      if (timedOut || state.Running || state.ExitCode !== 0) {
+        throw new Error('personal_insight_algorithm_failed')
+      }
+    } catch {
+      CORE_LOGGER.error('Approved personal Insight algorithm did not complete')
+      appendFileSync(configLogPath, 'Approved algorithm did not complete\n')
+      job.isStarted = false
+      job.algoStopTimestamp = String(Date.now() / 1000)
+      return {
+        status: C2DStatusNumber.AlgorithmFailed,
+        statusText: C2DStatusText.AlgorithmFailed
+      }
+    } finally {
+      clearTimeout(timeout)
+    }
+    job.isStarted = false
+    job.algoStopTimestamp = String(Date.now() / 1000)
+    return {
+      status: C2DStatusNumber.PublishingResults,
+      statusText: C2DStatusText.PublishingResults
     }
   }
 

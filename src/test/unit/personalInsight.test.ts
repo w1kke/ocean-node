@@ -29,7 +29,8 @@ import {
 } from '../../components/c2d/personalInsight.js'
 import {
   createPersonalInsightInputArchive,
-  C2DEngineDocker
+  C2DEngineDocker,
+  getPersonalInsightImageExecution
 } from '../../components/c2d/compute_engine_docker.js'
 import {
   C2DDockerConfigSchema,
@@ -349,6 +350,31 @@ describe('personal Insight boundary', () => {
       { name: 'inputs/dataset.json', mode: 0o400, uid: 1000, gid: 1000 },
       { name: 'outputs/', mode: 0o700, uid: 1000, gid: 1000 }
     ])
+  })
+
+  it('accepts only a bounded immutable image command', () => {
+    expect(
+      getPersonalInsightImageExecution({
+        Entrypoint: ['python', '/app/ocean_entrypoint.py'],
+        Cmd: null,
+        WorkingDir: '/app'
+      })
+    ).to.deep.equal({
+      command: ['python', '/app/ocean_entrypoint.py'],
+      workingDir: '/app'
+    })
+    expect(() =>
+      getPersonalInsightImageExecution({ Entrypoint: [], Cmd: null })
+    ).to.throw('personal_insight_image_command_invalid')
+    expect(() =>
+      getPersonalInsightImageExecution({ Entrypoint: ['bad\0command'] })
+    ).to.throw('personal_insight_image_command_invalid')
+    expect(() =>
+      getPersonalInsightImageExecution({
+        Entrypoint: ['python'],
+        WorkingDir: 'relative'
+      })
+    ).to.throw('personal_insight_image_command_invalid')
   })
 
   it('keeps the personal environment unavailable through generic compute access', async () => {
