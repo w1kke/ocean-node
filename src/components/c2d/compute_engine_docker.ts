@@ -116,31 +116,6 @@ const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
 const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
 
-export function createPersonalInsightInputArchive(dataset: Buffer): tarStream.Pack {
-  const archive = tarStream.pack()
-  const owner = { uid: C2D_CONTAINER_UID, gid: C2D_CONTAINER_GID }
-  archive.entry(
-    { name: 'inputs/', type: 'directory', mode: 0o700, size: 0, ...owner },
-    Buffer.alloc(0)
-  )
-  archive.entry(
-    {
-      name: 'inputs/dataset.json',
-      type: 'file',
-      mode: 0o400,
-      size: dataset.length,
-      ...owner
-    },
-    dataset
-  )
-  archive.entry(
-    { name: 'outputs/', type: 'directory', mode: 0o700, size: 0, ...owner },
-    Buffer.alloc(0)
-  )
-  archive.finalize()
-  return archive
-}
-
 export function getPersonalInsightImageExecution(config: {
   Entrypoint?: string | string[] | null
   Cmd?: string | string[] | null
@@ -3770,10 +3745,34 @@ export class C2DEngineDocker extends C2DEngine {
       job.privateInputChecksum = provisioned.checksum
       const dataset = readFileSync(datasetPath)
       validatePersonalInsightInput(dataset)
-      const archive = createPersonalInsightInputArchive(dataset)
-      await container.putArchive(archive as unknown as NodeJS.ReadableStream, {
-        path: '/data'
+      const writer = await container.exec({
+        Cmd: [
+          'sh',
+          '-c',
+          'umask 077; mkdir /data/inputs /data/outputs && cat > /data/inputs/dataset.json && chmod 400 /data/inputs/dataset.json'
+        ],
+        User: `${C2D_CONTAINER_UID}:${C2D_CONTAINER_GID}`,
+        AttachStdin: true,
+        AttachStdout: false,
+        AttachStderr: false
       })
+      const stream = await writer.start({
+        hijack: true,
+        stdin: true,
+        Detach: false,
+        Tty: false
+      })
+      const completed = new Promise<void>((resolve, reject) => {
+        stream.once('end', resolve)
+        stream.once('close', resolve)
+        stream.once('error', reject)
+      })
+      stream.end(dataset)
+      await completed
+      const state = await writer.inspect()
+      if (state.Running || state.ExitCode !== 0) {
+        throw new Error('personal_insight_input_write_failed')
+      }
     } catch (error) {
       CORE_LOGGER.error(
         `Unable to provision personal dataset: ${
