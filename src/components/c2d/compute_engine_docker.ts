@@ -2688,6 +2688,7 @@ export class C2DEngineDocker extends C2DEngine {
       const environment = await this.getJobEnvironment(job)
       const resultPolicy: ConsumerResultPolicy = environment?.consumerResultPolicy
       const privatePolicy = this.privateDatasetPolicies.get(job.environment)
+      const personalPolicy = this.personalInsightPolicies.get(job.environment)
       let singleJsonResult: Buffer = null
 
       if (!container || !resultPolicy) {
@@ -2696,17 +2697,18 @@ export class C2DEngineDocker extends C2DEngine {
         job.statusText = C2DStatusText.ResultsFetchFailed
       } else if (resultPolicy.mode === 'singleJson') {
         try {
-          singleJsonResult = await readSingleJsonResultArchive(
-            (await container.getArchive({
-              path: '/data/outputs/result.json'
-            })) as unknown as Readable,
-            resultPolicy.maxBytes
-          )
+          singleJsonResult = personalPolicy
+            ? await this.readPersonalInsightResult(container, resultPolicy.maxBytes)
+            : await readSingleJsonResultArchive(
+                (await container.getArchive({
+                  path: '/data/outputs/result.json'
+                })) as unknown as Readable,
+                resultPolicy.maxBytes
+              )
           job.resultValidation = validateConsumerResultContract(
             singleJsonResult,
             resultPolicy
           )
-          const personalPolicy = this.personalInsightPolicies.get(job.environment)
           if (personalPolicy) {
             validatePersonalInsightResult(singleJsonResult, personalPolicy)
           }
@@ -3830,6 +3832,46 @@ export class C2DEngineDocker extends C2DEngine {
       status: C2DStatusNumber.PublishingResults,
       statusText: C2DStatusText.PublishingResults
     }
+  }
+
+  private async readPersonalInsightResult(
+    container: Dockerode.Container,
+    maxBytes: number
+  ): Promise<Buffer> {
+    const command = await container.exec({
+      Cmd: [
+        'sh',
+        '-c',
+        'set -eu; [ "$(find /data/outputs -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 1 ]; [ -f /data/outputs/result.json ]; [ ! -L /data/outputs/result.json ]; [ -z "$(find /data/outputs -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]; exec cat /data/outputs/result.json'
+      ],
+      User: `${C2D_CONTAINER_UID}:${C2D_CONTAINER_GID}`,
+      AttachStdout: true,
+      AttachStderr: false
+    })
+    const stream = await command.start({ Detach: false, Tty: false })
+    const output = new PassThrough()
+    const errors = new PassThrough()
+    errors.resume()
+    const chunks: Buffer[] = []
+    let size = 0
+    let tooLarge = false
+    output.on('data', (chunk) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += bytes.length
+      if (size > maxBytes) tooLarge = true
+      else chunks.push(bytes)
+    })
+    container.modem.demuxStream(stream, output, errors)
+    await new Promise<void>((resolve, reject) => {
+      stream.once('end', resolve)
+      stream.once('close', resolve)
+      stream.once('error', reject)
+    })
+    const state = await command.inspect()
+    if (state.Running || state.ExitCode !== 0 || tooLarge || size === 0) {
+      throw new Error('personal_insight_result_unavailable')
+    }
+    return Buffer.concat(chunks)
   }
 
   private async uploadData(
