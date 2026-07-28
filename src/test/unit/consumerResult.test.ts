@@ -152,7 +152,10 @@ describe('single JSON consumer result', () => {
     ).to.deep.equal({
       contract: 'brainstem.c2d-result/v1',
       status: 'complete',
-      billable: true
+      billable: true,
+      algorithmVersion: '1.0.0',
+      algorithmImageDigest: `sha256:${'a'.repeat(64)}`,
+      datasetSchemaVersion: 'brainstem.private-rr-cohort/v1'
     })
     const suppressed = {
       ...base,
@@ -180,6 +183,13 @@ describe('single JSON consumer result', () => {
         validateConsumerResultContract(Buffer.from(JSON.stringify(invalid)), policy)
       ).to.throw('does not match')
     }
+    expect(() =>
+      validateConsumerResultContract(
+        Buffer.from(JSON.stringify(base)),
+        policy,
+        `sha256:${'b'.repeat(64)}`
+      )
+    ).to.throw('does not match execution')
   })
 
   it('publishes only validated bytes to local or remote storage', async () => {

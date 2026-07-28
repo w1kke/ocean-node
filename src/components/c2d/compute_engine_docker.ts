@@ -2705,9 +2705,15 @@ export class C2DEngineDocker extends C2DEngine {
                 })) as unknown as Readable,
                 resultPolicy.maxBytes
               )
+          const approvedAlgorithmDigest = (
+            privatePolicy ?? personalPolicy
+          )?.approvedAlgorithmImage
+            .split('@')
+            .at(-1)
           job.resultValidation = validateConsumerResultContract(
             singleJsonResult,
-            resultPolicy
+            resultPolicy,
+            approvedAlgorithmDigest
           )
           if (personalPolicy) {
             validatePersonalInsightResult(singleJsonResult, personalPolicy)
@@ -3016,7 +3022,7 @@ export class C2DEngineDocker extends C2DEngine {
   private retainedInsightMetadata(job: DBComputeJob): Record<string, string> | null {
     const { metadata } = job
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
-    const { purpose, insightId, resultSchema } = metadata
+    const { purpose, insightId, resultSchema, analysisFamily, scope } = metadata
     if (
       typeof purpose !== 'string' ||
       !['brainstem-insights-local-proof', 'brainstem-insights-paid'].includes(purpose) ||
@@ -3026,7 +3032,34 @@ export class C2DEngineDocker extends C2DEngine {
     ) {
       return null
     }
-    return { purpose, insightId, resultSchema }
+    if (analysisFamily === undefined && scope === undefined) {
+      return { purpose, insightId, resultSchema }
+    }
+    const validation = job.resultValidation
+    const algorithmImageDigest = job.privateResultRetention?.algorithmImageDigest
+    if (
+      typeof analysisFamily !== 'string' ||
+      !/^[a-z0-9][a-z0-9._/-]{2,79}$/.test(analysisFamily) ||
+      scope !== 'cohort' ||
+      validation?.contract !== 'brainstem.c2d-result/v1' ||
+      typeof validation.algorithmVersion !== 'string' ||
+      !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+        validation.algorithmVersion
+      ) ||
+      typeof algorithmImageDigest !== 'string' ||
+      !/^sha256:[0-9a-f]{64}$/.test(algorithmImageDigest)
+    ) {
+      return null
+    }
+    return {
+      purpose,
+      insightId,
+      analysisFamily,
+      scope,
+      algorithmVersion: validation.algorithmVersion,
+      algorithmImageDigest,
+      resultSchema: validation.contract
+    }
   }
 
   private sanitizePrivateJob(job: DBComputeJob): void {

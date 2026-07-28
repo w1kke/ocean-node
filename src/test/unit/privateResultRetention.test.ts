@@ -239,6 +239,45 @@ describe('private aggregate result retention', () => {
     ])
   })
 
+  it('derives immutable version metadata from the validated result', async () => {
+    const finishedAt = Math.floor(Date.now() / 1000)
+    const job = makeJob(finishedAt)
+    const insightId = `did:ope:${'d'.repeat(64)}`
+    job.metadata = {
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      analysisFamily: 'brainstem.resting-rr-cohort',
+      scope: 'cohort',
+      resultSchema: 'brainstem.c2d-result/v1',
+      algorithmVersion: 'caller-value-is-ignored',
+      algorithmImageDigest: `sha256:${'f'.repeat(64)}`
+    }
+    job.resultValidation = {
+      ...job.resultValidation,
+      algorithmVersion: '2.1.0',
+      algorithmImageDigest: ALGORITHM_DIGEST,
+      datasetSchemaVersion: 'brainstem.private-rr-cohort/v1'
+    }
+    const db = {
+      updateJob: sinon.stub().resolves(1),
+      getJob: sinon.stub().callsFake(() => [job]),
+      getSettlementByJobId: sinon.stub().resolves(null)
+    }
+    const engine = makeEngine(tempFolder, db)
+    seedPrivateJobDirectory(engine)
+
+    expect(await (engine as any).cleanupPrivateJobMaterial(job)).to.equal(true)
+    expect(job.metadata).to.deep.equal({
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      analysisFamily: 'brainstem.resting-rr-cohort',
+      scope: 'cohort',
+      algorithmVersion: '2.1.0',
+      algorithmImageDigest: ALGORITHM_DIGEST,
+      resultSchema: 'brainstem.c2d-result/v1'
+    })
+  })
+
   it('withholds a value-enabled result until the verified commitment is persisted', async () => {
     const finishedAt = Math.floor(Date.now() / 1000)
     const job = makeJob(finishedAt)

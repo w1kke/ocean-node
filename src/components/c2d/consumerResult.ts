@@ -168,7 +168,8 @@ const brainstemResult = z
 
 export function validateConsumerResultContract(
   bytes: Buffer,
-  policy: ConsumerResultPolicy
+  policy: ConsumerResultPolicy,
+  expectedAlgorithmImageDigest?: string
 ): DBComputeResultValidation | undefined {
   if (policy.mode !== 'singleJson' || !policy.resultContract) return undefined
 
@@ -182,10 +183,19 @@ export function validateConsumerResultContract(
   if (!result.success) {
     throw new Error('result.json does not match brainstem.c2d-result/v1')
   }
+  if (
+    expectedAlgorithmImageDigest &&
+    result.data.provenance.algorithmImageDigest !== expectedAlgorithmImageDigest
+  ) {
+    throw new Error('result.json algorithm digest does not match execution')
+  }
   return {
     contract: policy.resultContract,
     status: result.data.status,
-    billable: ['complete', 'insufficient_data'].includes(result.data.status)
+    billable: ['complete', 'insufficient_data'].includes(result.data.status),
+    algorithmVersion: result.data.provenance.algorithmVersion,
+    algorithmImageDigest: result.data.provenance.algorithmImageDigest,
+    datasetSchemaVersion: result.data.provenance.datasetSchemaVersion
   }
 }
 

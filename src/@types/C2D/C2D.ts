@@ -378,6 +378,9 @@ export interface DBComputeResultValidation {
   contract: 'brainstem.c2d-result/v1'
   status: 'complete' | 'insufficient_data' | 'failed'
   billable: boolean
+  algorithmVersion?: string
+  algorithmImageDigest?: string
+  datasetSchemaVersion?: string
 }
 
 export type DBPrivateResultCleanupState = 'pending' | 'complete' | 'failed'
