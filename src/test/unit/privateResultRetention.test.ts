@@ -279,6 +279,44 @@ describe('private aggregate result retention', () => {
     })
   })
 
+  it('retains reviewed paper Insight metadata after result publication', async () => {
+    const finishedAt = Math.floor(Date.now() / 1000)
+    const job = makeJob(finishedAt)
+    const insightId = `did:ope:${'e'.repeat(64)}`
+    job.metadata = {
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      analysisFamily: 'brainstem.resting-hrv-methods',
+      scope: 'cohort',
+      resultSchema: 'brainstem.insight-result/v1'
+    }
+    job.resultValidation = {
+      ...job.resultValidation,
+      contract: 'brainstem.insight-result/v1',
+      algorithmVersion: '0.1.0',
+      algorithmImageDigest: ALGORITHM_DIGEST,
+      datasetSchemaVersion: 'brainstem.resting-hrv-methods-cohort/v1'
+    }
+    const db = {
+      updateJob: sinon.stub().resolves(1),
+      getJob: sinon.stub().callsFake(() => [job]),
+      getSettlementByJobId: sinon.stub().resolves(null)
+    }
+    const engine = makeEngine(tempFolder, db)
+    seedPrivateJobDirectory(engine)
+
+    expect(await (engine as any).cleanupPrivateJobMaterial(job)).to.equal(true)
+    expect(job.metadata).to.deep.equal({
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      analysisFamily: 'brainstem.resting-hrv-methods',
+      scope: 'cohort',
+      algorithmVersion: '0.1.0',
+      algorithmImageDigest: ALGORITHM_DIGEST,
+      resultSchema: 'brainstem.insight-result/v1'
+    })
+  })
+
   it('withholds a value-enabled result until the verified commitment is persisted', async () => {
     const finishedAt = Math.floor(Date.now() / 1000)
     const job = makeJob(finishedAt)

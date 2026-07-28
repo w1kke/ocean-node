@@ -3180,17 +3180,22 @@ export class C2DEngineDocker extends C2DEngine {
     const { metadata } = job
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
     const { purpose, insightId, resultSchema, analysisFamily, scope } = metadata
+    const supportedResultContract =
+      resultSchema === 'brainstem.c2d-result/v1' ||
+      resultSchema === 'brainstem.insight-result/v1'
     if (
       typeof purpose !== 'string' ||
       !['brainstem-insights-local-proof', 'brainstem-insights-paid'].includes(purpose) ||
       typeof insightId !== 'string' ||
       !/^did:ope:[0-9a-f]{64}$/.test(insightId) ||
-      resultSchema !== 'brainstem.c2d-result/v1'
+      !supportedResultContract
     ) {
       return null
     }
     if (analysisFamily === undefined && scope === undefined) {
-      return { purpose, insightId, resultSchema }
+      return resultSchema === 'brainstem.c2d-result/v1'
+        ? { purpose, insightId, resultSchema }
+        : null
     }
     const validation = job.resultValidation
     const algorithmImageDigest = job.privateResultRetention?.algorithmImageDigest
@@ -3198,7 +3203,7 @@ export class C2DEngineDocker extends C2DEngine {
       typeof analysisFamily !== 'string' ||
       !/^[a-z0-9][a-z0-9._/-]{2,79}$/.test(analysisFamily) ||
       scope !== 'cohort' ||
-      validation?.contract !== 'brainstem.c2d-result/v1' ||
+      validation?.contract !== resultSchema ||
       typeof validation.algorithmVersion !== 'string' ||
       !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
         validation.algorithmVersion
