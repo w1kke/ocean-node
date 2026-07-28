@@ -48,11 +48,14 @@ const RESULT_CHECKSUM = 'f'.repeat(64)
 const BFF_TOKEN = 'generated-personal-bff-token-long-enough'
 const ANALYSIS_ID = 'brainstem.personal-resting-heart-overview/v1'
 const METHODS_ANALYSIS_ID = 'brainstem.resting-hrv-methods/v1'
+const SAMPLE_ENTROPY_ANALYSIS_ID = 'brainstem.resting-rr-sample-entropy/v1'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const METHODS_APPROVED_SHA256 = '1'.repeat(64)
 const METHODS_REFERENCE_SHA256 =
   '8fb8f2fb8b04af06c002412fc5c8aea94f9a59e9703ccd7943139eb1ded79b15'
+const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
+  '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
@@ -95,6 +98,22 @@ function methodsPolicy(crabUrl: string): PersonalInsightPolicy {
     inputPolicy: 'brainstem.personal-resting-hrv-methods/latest-16/v1',
     resultContract: 'brainstem.insight-result/v1',
     resultProfile: 'brainstem.resting-hrv-methods-personal/v1'
+  }
+}
+
+function sampleEntropyPolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: SAMPLE_ENTROPY_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: SAMPLE_ENTROPY_CANDIDATE_SHA256,
+    approvedManifestSha256: '2'.repeat(64),
+    referenceSha256: '3'.repeat(64),
+    inputSchema: 'brainstem.personal-resting-sample-entropy/v1',
+    inputPolicy: 'brainstem.personal-resting-sample-entropy/latest-4/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.resting-sample-entropy-personal/v1',
+    maximumRecordings: 4
   }
 }
 
@@ -214,6 +233,45 @@ function methodsResult(): any {
       referenceSha256: METHODS_REFERENCE_SHA256
     }
   }
+}
+
+function sampleEntropyInput(): any {
+  return {
+    schema: 'brainstem.personal-resting-sample-entropy/v1',
+    recordings: [
+      {
+        recordingType: 'rest',
+        durationSeconds: 300,
+        rrIntervalsMs: Array.from(
+          { length: 300 },
+          (_, index) => 990 + 20 * Math.sin(index / 11)
+        )
+      }
+    ]
+  }
+}
+
+function sampleEntropyResult(): any {
+  const value = methodsResult()
+  value.analysisId = SAMPLE_ENTROPY_ANALYSIS_ID
+  value.title = 'Resting rhythm complexity'
+  value.metrics = [{ label: 'Sample entropy', value: 1.234, unit: 'unitless' }]
+  value.charts = [
+    {
+      type: 'bar',
+      title: 'Resting rhythm complexity',
+      x: { label: 'Method', values: ['Sample entropy'] },
+      y: { label: 'Value', unit: 'unitless' },
+      series: [{ label: 'Result', values: [1.234] }]
+    }
+  ]
+  value.provenance = {
+    ...value.provenance,
+    datasetSchemaVersion: 'brainstem.personal-resting-sample-entropy/v1',
+    candidateManifestSha256: SAMPLE_ENTROPY_CANDIDATE_SHA256,
+    referenceSha256: '3'.repeat(64)
+  }
+  return value
 }
 
 describe('personal Insight boundary', () => {
@@ -543,6 +601,28 @@ describe('personal Insight boundary', () => {
         configured
       )
     ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+  })
+
+  it('binds the sample entropy release and exact latest-four contract', () => {
+    const configured = sampleEntropyPolicy('https://crab.internal/')
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(sampleEntropyInput())),
+        configured
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(sampleEntropyResult())),
+        configured
+      )
+    ).not.to.throw()
+
+    const tooMany = sampleEntropyInput()
+    tooMany.recordings = Array(5).fill(tooMany.recordings[0])
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(tooMany)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
   })
 
   it('retries only an idempotent completion after a lost connection', async () => {

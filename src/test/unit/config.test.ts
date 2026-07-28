@@ -173,6 +173,28 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: reviewedMethods
       }).success
     ).to.equal(true)
+    const sampleEntropy = {
+      ...reviewedMethods,
+      analysisId: 'brainstem.resting-rr-sample-entropy/v1',
+      paperInsight: {
+        ...reviewedMethods.paperInsight,
+        inputSchema: 'brainstem.resting-sample-entropy-cohort/v1',
+        candidateManifestSha256:
+          '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+      }
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.insight-result/v1'
+        },
+        privateDataset: sampleEntropy
+      }).success
+    ).to.equal(true)
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,

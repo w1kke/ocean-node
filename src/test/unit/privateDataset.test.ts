@@ -273,6 +273,71 @@ describe('Private dataset provisioning', () => {
     await expectFailure('private_dataset_contract_invalid')
   })
 
+  it('accepts only the exact sample entropy cohort contract', async () => {
+    policy = {
+      ...policy,
+      maxBytes: 64 * 1024,
+      analysisId: 'brainstem.resting-rr-sample-entropy/v1',
+      paperInsight: {
+        algorithmVersion: '0.1.0',
+        inputSchema: 'brainstem.resting-sample-entropy-cohort/v1',
+        candidateManifestSha256:
+          '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd',
+        approvedManifestSha256: 'd'.repeat(64),
+        referenceSha256: 'e'.repeat(64),
+        evidenceTier: 'E2_brainstem_compatible_exploratory',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      }
+    }
+    const intervals = Array.from({ length: 300 }, (_, index) => 990 + (index % 11))
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-sample-entropy-cohort/v1',
+        participants: [
+          {
+            subjectId: '1'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'rest',
+                durationSeconds: 300,
+                rrIntervalsMs: intervals
+              }
+            ]
+          }
+        ]
+      })
+    )
+
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.resting-rr-sample-entropy/v1')
+    rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-sample-entropy-cohort/v1',
+        participants: [
+          {
+            subjectId: '1'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'rest',
+                durationSeconds: 300,
+                rrIntervalsMs: intervals
+              },
+              {
+                recordingType: 'rest',
+                durationSeconds: 300,
+                rrIntervalsMs: intervals
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
+  })
+
   it('fails closed on unsafe mTLS identity and key material', () => {
     const caFile = path.join(directory, 'ca.pem')
     const certificateFile = path.join(directory, 'client.pem')

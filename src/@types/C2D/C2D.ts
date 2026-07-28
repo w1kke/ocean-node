@@ -121,6 +121,7 @@ export interface PrivateDatasetPolicy {
   analysisId:
     | 'brainstem.resting-rr-cohort-summary/v1'
     | 'brainstem.resting-hrv-methods/v1'
+    | 'brainstem.resting-rr-sample-entropy/v1'
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
@@ -128,7 +129,9 @@ export interface PrivateDatasetPolicy {
   releaseId: string
   paperInsight?: {
     algorithmVersion: '0.1.0'
-    inputSchema: 'brainstem.resting-hrv-methods-cohort/v1'
+    inputSchema:
+      | 'brainstem.resting-hrv-methods-cohort/v1'
+      | 'brainstem.resting-sample-entropy-cohort/v1'
     candidateManifestSha256: string
     approvedManifestSha256: string
     referenceSha256: string
@@ -151,6 +154,7 @@ export interface PersonalInsightPolicy {
   analysisId:
     | 'brainstem.personal-resting-heart-overview/v1'
     | 'brainstem.resting-hrv-methods/v1'
+    | 'brainstem.resting-rr-sample-entropy/v1'
   algorithmVersion: '1.0.0' | '0.1.0'
   crabUrl: string
   approvedAlgorithmImage: string
@@ -166,15 +170,18 @@ export interface PersonalInsightPolicy {
   inputSchema:
     | 'brainstem.personal-resting-rr/v1'
     | 'brainstem.personal-resting-hrv-methods/v1'
+    | 'brainstem.personal-resting-sample-entropy/v1'
   inputPolicy:
     | 'brainstem.personal-resting-rr/latest-16/v1'
     | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
+    | 'brainstem.personal-resting-sample-entropy/latest-4/v1'
   resultContract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
   resultProfile:
     | 'brainstem.personal-resting-heart-overview/v1'
     | 'brainstem.resting-hrv-methods-personal/v1'
+    | 'brainstem.resting-sample-entropy-personal/v1'
   audience: 'brainstem-ocean-node'
-  maximumRecordings: 16
+  maximumRecordings: 4 | 16
   maxInputBytes: number
   maxResultBytes: number
   maxJobDuration: number

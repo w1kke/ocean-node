@@ -18,6 +18,8 @@ const JOB_ID = /^[0-9a-f]{64}$/
 const SHA256 = /^[0-9a-f]{64}$/
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
+const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
+  '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -106,7 +108,6 @@ function isLocalProofHostname(hostname: string): boolean {
 
 function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
   if (
-    policy.maximumRecordings !== 16 ||
     policy.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
     policy.useClass !== 'methods_only' ||
     policy.clinicalUse !== 'prohibited'
@@ -115,6 +116,7 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
   }
   if (policy.analysisId === 'brainstem.personal-resting-heart-overview/v1') {
     return (
+      policy.maximumRecordings === 16 &&
       policy.algorithmVersion === '1.0.0' &&
       policy.inputSchema === 'brainstem.personal-resting-rr/v1' &&
       policy.inputPolicy === 'brainstem.personal-resting-rr/latest-16/v1' &&
@@ -125,14 +127,30 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       policy.referenceSha256 === null
     )
   }
+  if (policy.analysisId === 'brainstem.resting-hrv-methods/v1') {
+    return (
+      policy.maximumRecordings === 16 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1' &&
+      policy.inputPolicy === 'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
+      policy.candidateManifestSha256 === METHODS_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      typeof policy.referenceSha256 === 'string' &&
+      SHA256.test(policy.referenceSha256)
+    )
+  }
   return (
-    policy.analysisId === 'brainstem.resting-hrv-methods/v1' &&
+    policy.maximumRecordings === 4 &&
+    policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1' &&
     policy.algorithmVersion === '0.1.0' &&
-    policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1' &&
-    policy.inputPolicy === 'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
+    policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1' &&
+    policy.inputPolicy === 'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
     policy.resultContract === 'brainstem.insight-result/v1' &&
-    policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
-    policy.candidateManifestSha256 === METHODS_CANDIDATE_SHA256 &&
+    policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
+    policy.candidateManifestSha256 === SAMPLE_ENTROPY_CANDIDATE_SHA256 &&
     typeof policy.approvedManifestSha256 === 'string' &&
     SHA256.test(policy.approvedManifestSha256) &&
     typeof policy.referenceSha256 === 'string' &&
@@ -636,6 +654,40 @@ const methodsPersonalInput = z
   })
   .strict()
 
+const sampleEntropyPersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-resting-sample-entropy/v1'),
+    recordings: z
+      .array(
+        z
+          .object({
+            recordingType: z.literal('rest'),
+            durationSeconds: z.number().int().min(300).max(360),
+            rrIntervalsMs: z
+              .array(z.number().finite().min(300).max(2000))
+              .min(240)
+              .max(900)
+          })
+          .strict()
+          .superRefine((recording, context) => {
+            const representedSeconds =
+              recording.rrIntervalsMs.reduce((total, value) => total + value, 0) / 1000
+            if (
+              Math.abs(representedSeconds - recording.durationSeconds) >
+              Math.max(5, recording.durationSeconds * 0.1)
+            ) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'interval duration does not match durationSeconds'
+              })
+            }
+          })
+      )
+      .min(1)
+      .max(4)
+  })
+  .strict()
+
 export function validatePersonalInsightInput(
   bytes: Buffer,
   policy: PersonalInsightPolicy
@@ -649,7 +701,9 @@ export function validatePersonalInsightInput(
   const input =
     policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1'
       ? methodsPersonalInput
-      : legacyPersonalInput
+      : policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1'
+        ? sampleEntropyPersonalInput
+        : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }

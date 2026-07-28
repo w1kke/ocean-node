@@ -294,7 +294,8 @@ export const C2DEnvironmentConfigSchema = z
       .object({
         analysisId: z.enum([
           'brainstem.resting-rr-cohort-summary/v1',
-          'brainstem.resting-hrv-methods/v1'
+          'brainstem.resting-hrv-methods/v1',
+          'brainstem.resting-rr-sample-entropy/v1'
         ]),
         url: z
           .string()
@@ -316,10 +317,11 @@ export const C2DEnvironmentConfigSchema = z
         paperInsight: z
           .object({
             algorithmVersion: z.literal('0.1.0'),
-            inputSchema: z.literal('brainstem.resting-hrv-methods-cohort/v1'),
-            candidateManifestSha256: z.literal(
-              '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
-            ),
+            inputSchema: z.enum([
+              'brainstem.resting-hrv-methods-cohort/v1',
+              'brainstem.resting-sample-entropy-cohort/v1'
+            ]),
+            candidateManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
             approvedManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
             referenceSha256: z.string().regex(/^[0-9a-f]{64}$/),
             evidenceTier: z.literal('E2_brainstem_compatible_exploratory'),
@@ -352,10 +354,27 @@ export const C2DEnvironmentConfigSchema = z
       })
       .strict()
       .refine(
-        (policy) =>
-          policy.analysisId === 'brainstem.resting-hrv-methods/v1'
-            ? policy.paperInsight !== undefined && policy.participantValue === undefined
-            : policy.paperInsight === undefined,
+        (policy) => {
+          if (policy.analysisId === 'brainstem.resting-hrv-methods/v1') {
+            return (
+              policy.paperInsight?.inputSchema ===
+                'brainstem.resting-hrv-methods-cohort/v1' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1' &&
+              policy.participantValue === undefined
+            )
+          }
+          if (policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1') {
+            return (
+              policy.paperInsight?.inputSchema ===
+                'brainstem.resting-sample-entropy-cohort/v1' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
+              policy.participantValue === undefined
+            )
+          }
+          return policy.paperInsight === undefined
+        },
         {
           message: 'The reviewed paper policy must match the named cohort analysis'
         }
@@ -365,7 +384,8 @@ export const C2DEnvironmentConfigSchema = z
       .object({
         analysisId: z.enum([
           'brainstem.personal-resting-heart-overview/v1',
-          'brainstem.resting-hrv-methods/v1'
+          'brainstem.resting-hrv-methods/v1',
+          'brainstem.resting-rr-sample-entropy/v1'
         ]),
         algorithmVersion: z.enum(['1.0.0', '0.1.0']),
         crabUrl: z
@@ -406,11 +426,13 @@ export const C2DEnvironmentConfigSchema = z
           .regex(/^\/dev\/shm\/[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/),
         inputSchema: z.enum([
           'brainstem.personal-resting-rr/v1',
-          'brainstem.personal-resting-hrv-methods/v1'
+          'brainstem.personal-resting-hrv-methods/v1',
+          'brainstem.personal-resting-sample-entropy/v1'
         ]),
         inputPolicy: z.enum([
           'brainstem.personal-resting-rr/latest-16/v1',
-          'brainstem.personal-resting-hrv-methods/latest-16/v1'
+          'brainstem.personal-resting-hrv-methods/latest-16/v1',
+          'brainstem.personal-resting-sample-entropy/latest-4/v1'
         ]),
         resultContract: z.enum([
           'brainstem.c2d-result/v1',
@@ -418,10 +440,11 @@ export const C2DEnvironmentConfigSchema = z
         ]),
         resultProfile: z.enum([
           'brainstem.personal-resting-heart-overview/v1',
-          'brainstem.resting-hrv-methods-personal/v1'
+          'brainstem.resting-hrv-methods-personal/v1',
+          'brainstem.resting-sample-entropy-personal/v1'
         ]),
         audience: z.literal('brainstem-ocean-node'),
-        maximumRecordings: z.literal(16),
+        maximumRecordings: z.union([z.literal(4), z.literal(16)]),
         maxInputBytes: z
           .number()
           .int()
@@ -461,8 +484,10 @@ export const C2DEnvironmentConfigSchema = z
         const url = new URL(policy.crabUrl)
         const legacy =
           policy.analysisId === 'brainstem.personal-resting-heart-overview/v1'
+        const methods = policy.analysisId === 'brainstem.resting-hrv-methods/v1'
         const exactPolicy = legacy
-          ? policy.algorithmVersion === '1.0.0' &&
+          ? policy.maximumRecordings === 16 &&
+            policy.algorithmVersion === '1.0.0' &&
             policy.inputSchema === 'brainstem.personal-resting-rr/v1' &&
             policy.inputPolicy === 'brainstem.personal-resting-rr/latest-16/v1' &&
             policy.resultContract === 'brainstem.c2d-result/v1' &&
@@ -470,15 +495,28 @@ export const C2DEnvironmentConfigSchema = z
             policy.candidateManifestSha256 === null &&
             policy.approvedManifestSha256 === null &&
             policy.referenceSha256 === null
-          : policy.algorithmVersion === '0.1.0' &&
-            policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1' &&
-            policy.inputPolicy ===
-              'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
-            policy.resultContract === 'brainstem.insight-result/v1' &&
-            policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
-            policy.candidateManifestSha256 !== null &&
-            policy.approvedManifestSha256 !== null &&
-            policy.referenceSha256 !== null
+          : methods
+            ? policy.maximumRecordings === 16 &&
+              policy.algorithmVersion === '0.1.0' &&
+              policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1' &&
+              policy.inputPolicy ===
+                'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
+              policy.resultContract === 'brainstem.insight-result/v1' &&
+              policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
+              policy.candidateManifestSha256 !== null &&
+              policy.approvedManifestSha256 !== null &&
+              policy.referenceSha256 !== null
+            : policy.maximumRecordings === 4 &&
+              policy.algorithmVersion === '0.1.0' &&
+              policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1' &&
+              policy.inputPolicy ===
+                'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
+              policy.resultContract === 'brainstem.insight-result/v1' &&
+              policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
+              policy.candidateManifestSha256 ===
+                '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
+              policy.approvedManifestSha256 !== null &&
+              policy.referenceSha256 !== null
         if (!exactPolicy) {
           context.addIssue({
             code: z.ZodIssueCode.custom,

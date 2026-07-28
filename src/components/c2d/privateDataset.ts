@@ -22,6 +22,8 @@ const RELEASE_HEADER = 'x-brainstem-cohort-release-id'
 const ANALYSIS_HEADER = 'x-brainstem-analysis-id'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
+const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
+  '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
   Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
@@ -64,6 +66,19 @@ export function assertPrivateDatasetConfiguration(
     (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
       policy.paperInsight.inputSchema !== 'brainstem.resting-hrv-methods-cohort/v1' ||
       policy.paperInsight.candidateManifestSha256 !== METHODS_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      !SHA256.test(policy.paperInsight.referenceSha256) ||
+      policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+      policy.paperInsight.inputSchema !== 'brainstem.resting-sample-entropy-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !== SAMPLE_ENTROPY_CANDIDATE_SHA256 ||
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
       !SHA256.test(policy.paperInsight.referenceSha256) ||
       policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
@@ -187,6 +202,8 @@ function validateReviewedCohortInput(
       throw new Error('invalid dataset')
     }
     const subjects = new Set<string>()
+    const sampleEntropy =
+      policy.paperInsight.inputSchema === 'brainstem.resting-sample-entropy-cohort/v1'
     for (const participant of dataset.participants) {
       if (
         !participant ||
@@ -197,7 +214,7 @@ function validateReviewedCohortInput(
         subjects.has(participant.subjectId) ||
         !Array.isArray(participant.recordings) ||
         participant.recordings.length < 1 ||
-        participant.recordings.length > 16
+        participant.recordings.length > (sampleEntropy ? 1 : 16)
       ) {
         throw new Error('invalid participant')
       }
@@ -213,13 +230,13 @@ function validateReviewedCohortInput(
           recording.durationSeconds < 300 ||
           recording.durationSeconds > 360 ||
           !Array.isArray(recording.rrIntervalsMs) ||
-          recording.rrIntervalsMs.length < 180 ||
-          recording.rrIntervalsMs.length > 3600 ||
+          recording.rrIntervalsMs.length < (sampleEntropy ? 240 : 180) ||
+          recording.rrIntervalsMs.length > (sampleEntropy ? 900 : 3600) ||
           recording.rrIntervalsMs.some(
             (value: unknown) =>
               typeof value !== 'number' ||
               !Number.isFinite(value) ||
-              value < 250 ||
+              value < (sampleEntropy ? 300 : 250) ||
               value > 2000
           ) ||
           Math.abs(
