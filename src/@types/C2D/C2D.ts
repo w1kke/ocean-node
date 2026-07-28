@@ -216,6 +216,7 @@ export interface ComputeRuntimes {
 }
 export interface ComputeEnvironment extends ComputeEnvironmentBaseConfig {
   id: string // v1
+  configuredId?: string
   runningJobs: number
   runningfreeJobs?: number
   consumerAddress: string // v1

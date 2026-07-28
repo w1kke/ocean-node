@@ -503,6 +503,7 @@ export class C2DEngineDocker extends C2DEngine {
       if (envDef.maxJobDuration !== undefined) env.maxJobDuration = envDef.maxJobDuration
       if (envDef.maxJobs !== undefined) env.maxJobs = envDef.maxJobs
       if (envDef.description !== undefined) env.description = envDef.description
+      if (envDef.id !== undefined) env.configuredId = envDef.id
 
       // Free tier config for this environment
       if (envDef.free) {
