@@ -29,9 +29,13 @@ personalInsightRoutes.post(
   `${SERVICES_API_BASE_PATH}/personal-insights/runs/start`,
   async (req, res) => {
     try {
-      const body = exactBody(req.body, ['grant'])
-      if (typeof body.grant !== 'string') throw new Error('not_found')
-      const result = await req.oceanNode.getC2DEngines().startPersonalInsight(body.grant)
+      const body = exactBody(req.body, ['analysisId', 'grant'])
+      if (typeof body.analysisId !== 'string' || typeof body.grant !== 'string') {
+        throw new Error('not_found')
+      }
+      const result = await req.oceanNode
+        .getC2DEngines()
+        .startPersonalInsight(body.analysisId, body.grant)
       res
         .status(202)
         .set({

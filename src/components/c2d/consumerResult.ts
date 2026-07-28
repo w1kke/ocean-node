@@ -166,6 +166,103 @@ const brainstemResult = z
     }
   })
 
+const insightResult = z
+  .object({
+    schema: z.literal('brainstem.insight-result/v1'),
+    analysisId: z
+      .string()
+      .max(100)
+      .regex(/^[a-z0-9.-]+\/v[1-9][0-9]*$/),
+    scope: z.enum(['cohort', 'personal']),
+    status: z.enum(['complete', 'insufficient_data', 'failed']),
+    abstentionReason: z
+      .enum([
+        'insufficient_quality',
+        'insufficient_coverage',
+        'privacy_floor',
+        'uncalibrated_device',
+        'outside_validated_population',
+        'out_of_distribution',
+        'model_uncertainty',
+        'reference_unavailable'
+      ])
+      .nullable(),
+    evidence: z
+      .object({
+        tier: z.enum([
+          'E1_public_reproduced',
+          'E2_brainstem_compatible_exploratory',
+          'E3_brainstem_validated_research'
+        ]),
+        useClass: z.enum([
+          'methods_only',
+          'exploratory_research',
+          'protocol_bound_research'
+        ]),
+        clinicalUse: z.literal('prohibited')
+      })
+      .strict(),
+    paperClassification: z
+      .object({
+        decision: z.enum(['classified', 'abstained', 'not_applicable']),
+        label: plainText(80).nullable(),
+        score: z.number().finite().min(0).max(1).nullable()
+      })
+      .strict()
+      .nullable(),
+    title: plainText(160),
+    summary: plainText(1000),
+    metrics: z.array(metric).max(12),
+    charts: z.array(chart).max(8),
+    table: table.nullable(),
+    warnings: z.array(plainText(500)).max(8),
+    provenance: provenance
+      .extend({
+        candidateManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+        referenceSha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .nullable()
+      })
+      .strict()
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const hasResult = value.metrics.length > 0 || value.charts.length > 0 || value.table
+    if (value.status === 'complete' && !hasResult) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'complete result must contain an aggregate result'
+      })
+    }
+    if (value.status !== 'complete' && hasResult) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'non-complete result must not contain aggregate values'
+      })
+    }
+    if (
+      value.paperClassification?.decision === 'classified' &&
+      value.evidence.tier !== 'E3_brainstem_validated_research'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'classification requires E3 evidence'
+      })
+    }
+    if (
+      value.paperClassification &&
+      value.paperClassification.decision !== 'classified' &&
+      (value.paperClassification.label !== null ||
+        value.paperClassification.score !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'abstained classifications cannot contain a label or score'
+      })
+    }
+  })
+
 export function validateConsumerResultContract(
   bytes: Buffer,
   policy: ConsumerResultPolicy,
@@ -179,9 +276,12 @@ export function validateConsumerResultContract(
   } catch {
     throw new Error('result.json is not valid JSON')
   }
-  const result = brainstemResult.safeParse(value)
+  const result =
+    policy.resultContract === 'brainstem.insight-result/v1'
+      ? insightResult.safeParse(value)
+      : brainstemResult.safeParse(value)
   if (!result.success) {
-    throw new Error('result.json does not match brainstem.c2d-result/v1')
+    throw new Error(`result.json does not match ${policy.resultContract}`)
   }
   if (
     expectedAlgorithmImageDigest &&

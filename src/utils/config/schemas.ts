@@ -261,7 +261,9 @@ export const ConsumerResultPolicySchema = z.discriminatedUnion('mode', [
         .int()
         .positive()
         .max(10 * 1024 * 1024),
-      resultContract: z.literal('brainstem.c2d-result/v1').optional()
+      resultContract: z
+        .enum(['brainstem.c2d-result/v1', 'brainstem.insight-result/v1'])
+        .optional()
     })
     .strict()
 ])
@@ -333,6 +335,11 @@ export const C2DEnvironmentConfigSchema = z
       .optional(),
     personalInsight: z
       .object({
+        analysisId: z.enum([
+          'brainstem.personal-resting-heart-overview/v1',
+          'brainstem.resting-hrv-methods/v1'
+        ]),
+        algorithmVersion: z.enum(['1.0.0', '0.1.0']),
         crabUrl: z
           .string()
           .url()
@@ -349,16 +356,44 @@ export const C2DEnvironmentConfigSchema = z
         approvedAlgorithmImage: z
           .string()
           .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
+        candidateManifestSha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .nullable(),
+        approvedManifestSha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .nullable(),
+        referenceSha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .nullable(),
+        evidenceTier: z.literal('E2_brainstem_compatible_exploratory'),
+        useClass: z.literal('methods_only'),
+        clinicalUse: z.literal('prohibited'),
         bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
         bffBearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
         ramWorkspaceRoot: z
           .string()
           .regex(/^\/dev\/shm\/[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/),
-        inputSchema: z.literal('brainstem.personal-resting-rr/v1'),
-        inputPolicy: z.literal('brainstem.personal-resting-rr/latest-16/v1'),
-        resultContract: z.literal('brainstem.c2d-result/v1'),
-        resultProfile: z.literal('brainstem.personal-resting-heart-overview/v1'),
+        inputSchema: z.enum([
+          'brainstem.personal-resting-rr/v1',
+          'brainstem.personal-resting-hrv-methods/v1'
+        ]),
+        inputPolicy: z.enum([
+          'brainstem.personal-resting-rr/latest-16/v1',
+          'brainstem.personal-resting-hrv-methods/latest-16/v1'
+        ]),
+        resultContract: z.enum([
+          'brainstem.c2d-result/v1',
+          'brainstem.insight-result/v1'
+        ]),
+        resultProfile: z.enum([
+          'brainstem.personal-resting-heart-overview/v1',
+          'brainstem.resting-hrv-methods-personal/v1'
+        ]),
         audience: z.literal('brainstem-ocean-node'),
+        maximumRecordings: z.literal(16),
         maxInputBytes: z
           .number()
           .int()
@@ -396,6 +431,33 @@ export const C2DEnvironmentConfigSchema = z
       .strict()
       .superRefine((policy, context) => {
         const url = new URL(policy.crabUrl)
+        const legacy =
+          policy.analysisId === 'brainstem.personal-resting-heart-overview/v1'
+        const exactPolicy = legacy
+          ? policy.algorithmVersion === '1.0.0' &&
+            policy.inputSchema === 'brainstem.personal-resting-rr/v1' &&
+            policy.inputPolicy === 'brainstem.personal-resting-rr/latest-16/v1' &&
+            policy.resultContract === 'brainstem.c2d-result/v1' &&
+            policy.resultProfile === 'brainstem.personal-resting-heart-overview/v1' &&
+            policy.candidateManifestSha256 === null &&
+            policy.approvedManifestSha256 === null &&
+            policy.referenceSha256 === null
+          : policy.algorithmVersion === '0.1.0' &&
+            policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1' &&
+            policy.inputPolicy ===
+              'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
+            policy.resultContract === 'brainstem.insight-result/v1' &&
+            policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
+            policy.candidateManifestSha256 !== null &&
+            policy.approvedManifestSha256 !== null &&
+            policy.referenceSha256 !== null
+        if (!exactPolicy) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['analysisId'],
+            message: 'Personal Insight policy fields do not match the named analysis'
+          })
+        }
         if (policy.bffBearerTokenEnv === policy.bearerTokenEnv) {
           context.addIssue({
             code: z.ZodIssueCode.custom,

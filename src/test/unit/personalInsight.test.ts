@@ -46,12 +46,27 @@ const CAPABILITY = `capability-id.${'d'.repeat(43)}`
 const IMAGE = `brainstem/personal-resting@sha256:${'e'.repeat(64)}`
 const RESULT_CHECKSUM = 'f'.repeat(64)
 const BFF_TOKEN = 'generated-personal-bff-token-long-enough'
+const ANALYSIS_ID = 'brainstem.personal-resting-heart-overview/v1'
+const METHODS_ANALYSIS_ID = 'brainstem.resting-hrv-methods/v1'
+const METHODS_CANDIDATE_SHA256 =
+  '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
+const METHODS_APPROVED_SHA256 = '1'.repeat(64)
+const METHODS_REFERENCE_SHA256 =
+  '8fb8f2fb8b04af06c002412fc5c8aea94f9a59e9703ccd7943139eb1ded79b15'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
+    analysisId: ANALYSIS_ID,
+    algorithmVersion: '1.0.0',
     crabUrl,
     allowInsecureLocalProof: crabUrl.startsWith('http://'),
     approvedAlgorithmImage: IMAGE,
+    candidateManifestSha256: null,
+    approvedManifestSha256: null,
+    referenceSha256: null,
+    evidenceTier: 'E2_brainstem_compatible_exploratory',
+    useClass: 'methods_only',
+    clinicalUse: 'prohibited',
     bearerTokenEnv: 'PERSONAL_INSIGHT_TEST_TOKEN',
     bffBearerTokenEnv: 'PERSONAL_INSIGHT_BFF_TEST_TOKEN',
     ramWorkspaceRoot: '/dev/shm/brainstem-personal-insight-test',
@@ -60,10 +75,26 @@ function policy(crabUrl: string): PersonalInsightPolicy {
     resultContract: 'brainstem.c2d-result/v1',
     resultProfile: 'brainstem.personal-resting-heart-overview/v1',
     audience: 'brainstem-ocean-node',
+    maximumRecordings: 16,
     maxInputBytes: 1024 * 1024,
     maxResultBytes: 256 * 1024,
     maxJobDuration: 120,
     resources: { cpu: 1, ram: 1 }
+  }
+}
+
+function methodsPolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: METHODS_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: METHODS_CANDIDATE_SHA256,
+    approvedManifestSha256: METHODS_APPROVED_SHA256,
+    referenceSha256: METHODS_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-resting-hrv-methods/v1',
+    inputPolicy: 'brainstem.personal-resting-hrv-methods/latest-16/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.resting-hrv-methods-personal/v1'
   }
 }
 
@@ -115,6 +146,76 @@ function result(): any {
   }
 }
 
+function methodsInput(): any {
+  return {
+    schema: 'brainstem.personal-resting-hrv-methods/v1',
+    recordings: [
+      {
+        recordingType: 'rest',
+        durationSeconds: 300,
+        rrIntervalsMs: Array.from(
+          { length: 330 },
+          (_, index) => 900 + 20 * Math.sin(index / 11)
+        )
+      }
+    ]
+  }
+}
+
+function methodsResult(): any {
+  return {
+    schema: 'brainstem.insight-result/v1',
+    analysisId: METHODS_ANALYSIS_ID,
+    scope: 'personal',
+    status: 'complete',
+    abstentionReason: null,
+    evidence: {
+      tier: 'E2_brainstem_compatible_exploratory',
+      useClass: 'methods_only',
+      clinicalUse: 'prohibited'
+    },
+    paperClassification: {
+      decision: 'not_applicable',
+      label: null,
+      score: null
+    },
+    title: 'Resting heart variability methods',
+    summary:
+      'Your compatible resting recordings compared with a frozen aggregate reference.',
+    metrics: [
+      { label: 'SDNN', value: 14.2, unit: 'ms' },
+      { label: 'RMSSD', value: 1.4, unit: 'ms' }
+    ],
+    charts: [
+      {
+        type: 'bar',
+        title: 'Time-domain measures',
+        x: { label: 'Method', values: ['SDNN', 'RMSSD'] },
+        y: { label: 'Value', unit: 'ms' },
+        series: [{ label: 'Result', values: [14.2, 1.4] }]
+      }
+    ],
+    table: {
+      title: 'Personal result and aggregate comparison',
+      columns: [
+        { label: 'Measure' },
+        { label: 'Value', unit: 'ms' },
+        { label: 'Comparison' }
+      ],
+      rows: [['SDNN', 14.2, 'below reference middle band']]
+    },
+    warnings: ['Descriptive research method only; not medical advice.'],
+    provenance: {
+      algorithmVersion: '0.1.0',
+      algorithmImageDigest: IMAGE.split('@').at(-1),
+      datasetSchemaVersion: 'brainstem.personal-resting-hrv-methods/v1',
+      generatedAt: '2026-07-28T00:00:00Z',
+      candidateManifestSha256: METHODS_CANDIDATE_SHA256,
+      referenceSha256: METHODS_REFERENCE_SHA256
+    }
+  }
+}
+
 describe('personal Insight boundary', () => {
   const environment = {
     PERSONAL_INSIGHT_TEST_TOKEN: 'generated-personal-test-token-long-enough',
@@ -151,19 +252,31 @@ describe('personal Insight boundary', () => {
           headers: request.headers
         })
         if (request.url?.endsWith('/grants/claim')) {
+          const claimed =
+            body.analysisId === METHODS_ANALYSIS_ID
+              ? methodsPolicy(crabUrl)
+              : policy(crabUrl)
           response.writeHead(200, { 'Content-Type': 'application/json' })
           response.end(
             JSON.stringify({
               result: {
                 status: 'claimed',
+                analysisId: claimed.analysisId,
+                algorithmVersion: claimed.algorithmVersion,
                 expiresAt: '2026-07-27T07:05:00Z',
                 algorithmImageDigest: IMAGE.split('@').at(-1),
-                inputSchema: 'brainstem.personal-resting-rr/v1',
-                inputPolicy: 'brainstem.personal-resting-rr/latest-16/v1',
-                resultSchema: 'brainstem.c2d-result/v1',
-                resultProfile: 'brainstem.personal-resting-heart-overview/v1',
-                maximumRecordings: 16,
-                audience: 'brainstem-ocean-node',
+                inputSchema: claimed.inputSchema,
+                inputPolicy: claimed.inputPolicy,
+                resultSchema: claimed.resultContract,
+                resultProfile: claimed.resultProfile,
+                candidateManifestSha256: claimed.candidateManifestSha256,
+                approvedManifestSha256: claimed.approvedManifestSha256,
+                referenceSha256: claimed.referenceSha256,
+                evidenceTier: claimed.evidenceTier,
+                useClass: claimed.useClass,
+                clinicalUse: claimed.clinicalUse,
+                maximumRecordings: claimed.maximumRecordings,
+                audience: claimed.audience,
                 historyId: HISTORY_ID
               }
             })
@@ -363,13 +476,18 @@ describe('personal Insight boundary', () => {
       )
     ).to.equal(true)
     expect(requests[0].body).to.deep.equal({
+      analysisId: ANALYSIS_ID,
       grant: GRANT,
       jobId: JOB_ID,
       runId: RUN_ID
     })
     expect(requests[1].headers['x-brainstem-personal-grant']).to.equal(GRANT)
     expect(requests[1].headers['x-ocean-compute-job-id']).to.equal(JOB_ID)
-    expect(requests[4].body).to.deep.equal({ historyId: HISTORY_ID })
+    expect(requests[1].headers['x-brainstem-analysis-id']).to.equal(ANALYSIS_ID)
+    expect(requests[4].body).to.deep.equal({
+      analysisId: ANALYSIS_ID,
+      historyId: HISTORY_ID
+    })
     expect(JSON.parse(readFileSync(destination, 'utf8'))).to.deep.equal(input())
     expect(fetched.bytes).to.equal(readFileSync(destination).length)
   })
@@ -377,7 +495,7 @@ describe('personal Insight boundary', () => {
   it('validates the exact personal input and result profile', () => {
     const configured = policy('https://crab.internal/')
     expect(() =>
-      validatePersonalInsightInput(Buffer.from(JSON.stringify(input())))
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(input())), configured)
     ).not.to.throw()
     expect(() =>
       validatePersonalInsightResult(Buffer.from(JSON.stringify(result())), configured)
@@ -385,12 +503,45 @@ describe('personal Insight boundary', () => {
 
     const wrongInput = { ...input(), participant: 'must-not-enter-compute' }
     expect(() =>
-      validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongInput)))
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongInput)), configured)
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
     const wrongResult = result()
     wrongResult.metrics[0].value = 2
     expect(() =>
       validatePersonalInsightResult(Buffer.from(JSON.stringify(wrongResult)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+  })
+
+  it('binds the reviewed methods release and its exact personal contracts', async () => {
+    const configured = methodsPolicy(crabUrl)
+    expect(
+      await claimPersonalInsightGrant(configured, GRANT, JOB_ID, RUN_ID, environment)
+    ).to.equal(HISTORY_ID)
+    expect(requests[0].body.analysisId).to.equal(METHODS_ANALYSIS_ID)
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(methodsInput())),
+        configured
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(methodsResult())),
+        configured
+      )
+    ).not.to.throw()
+
+    const identityLeak = { ...methodsInput(), participant: 'must-not-enter-compute' }
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(identityLeak)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const wrongReference = methodsResult()
+    wrongReference.provenance.referenceSha256 = '9'.repeat(64)
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(wrongReference)),
+        configured
+      )
     ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
   })
 
@@ -674,6 +825,24 @@ describe('personal Insight boundary', () => {
       ]).success
     ).to.equal(true)
 
+    const reviewedMethods = methodsPolicy('https://crab.internal/')
+    const methodsConfigured = {
+      ...configured,
+      consumerResultPolicy: {
+        mode: 'singleJson',
+        maxBytes: 256 * 1024,
+        resultContract: 'brainstem.insight-result/v1'
+      },
+      personalInsight: reviewedMethods
+    }
+    expect(C2DEnvironmentConfigSchema.safeParse(methodsConfigured).success).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: { ...reviewedMethods, referenceSha256: null }
+      }).success
+    ).to.equal(false)
+
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...configured,
@@ -791,7 +960,10 @@ describe('personal Insight boundary', () => {
     app.use((request, _response, next) => {
       request.oceanNode = {
         getC2DEngines: () => ({
-          startPersonalInsight: () => Promise.resolve({ runId: RUN_ID }),
+          startPersonalInsight: (analysisId: string, grant: string) =>
+            analysisId === ANALYSIS_ID && grant === GRANT
+              ? Promise.resolve({ runId: RUN_ID })
+              : Promise.reject(new Error('not_found')),
           getPersonalInsightStatus: () => Promise.resolve({ status: 'complete' }),
           getPersonalInsightHistoryStatus: () => Promise.resolve({ status: 'complete' }),
           revalidatePersonalInsight: (
@@ -828,7 +1000,10 @@ describe('personal Insight boundary', () => {
     const address = routeServer.address() as AddressInfo
     const base = `http://127.0.0.1:${address.port}/api/services/personal-insights/runs`
     try {
-      const start = await axios.post(`${base}/start`, { grant: GRANT })
+      const start = await axios.post(`${base}/start`, {
+        analysisId: ANALYSIS_ID,
+        grant: GRANT
+      })
       expect(start.status).to.equal(202)
       expect(start.data).to.deep.equal({ runId: RUN_ID })
       const status = await axios.post(`${base}/status`, {
@@ -866,7 +1041,11 @@ describe('personal Insight boundary', () => {
       expect(historyResult.headers['x-content-sha256']).to.equal(RESULT_CHECKSUM)
       const rejected = await axios.post(
         `${base}/start`,
-        { grant: GRANT, environment: 'caller-controlled' },
+        {
+          analysisId: ANALYSIS_ID,
+          grant: GRANT,
+          environment: 'caller-controlled'
+        },
         { validateStatus: () => true }
       )
       expect(rejected.status).to.equal(404)

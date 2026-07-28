@@ -151,17 +151,20 @@ export class C2DEngines {
     return response
   }
 
-  private getPersonalInsightEngine(): C2DEngineDocker {
+  private getPersonalInsightEngine(analysisId?: string): C2DEngineDocker {
     const engines = this.engines.filter(
       (engine): engine is C2DEngineDocker =>
-        engine instanceof C2DEngineDocker && engine.hasPersonalInsight()
+        engine instanceof C2DEngineDocker && engine.hasPersonalInsight(analysisId)
     )
     if (engines.length !== 1) throw new Error('Personal Insight is unavailable')
     return engines[0]
   }
 
-  startPersonalInsight(grant: string): Promise<{ runId: string }> {
-    return this.getPersonalInsightEngine().startPersonalInsight(grant)
+  startPersonalInsight(analysisId: string, grant: string): Promise<{ runId: string }> {
+    return this.getPersonalInsightEngine(analysisId).startPersonalInsight(
+      analysisId,
+      grant
+    )
   }
 
   getPersonalInsightStatus(

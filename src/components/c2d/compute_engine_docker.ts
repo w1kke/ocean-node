@@ -539,6 +539,13 @@ export class C2DEngineDocker extends C2DEngine {
           throw new Error('Personal Insight requires fail-closed image scanning')
         }
         assertPersonalInsightConfiguration(envDef.personalInsight)
+        if (
+          [...this.personalInsightPolicies.values()].some(
+            (policy) => policy.analysisId === envDef.personalInsight.analysisId
+          )
+        ) {
+          throw new Error('Personal Insight analysis is configured more than once')
+        }
         resetRamWorkspaceRoot(envDef.personalInsight)
         this.personalInsightPolicies.set(env.id, envDef.personalInsight)
       }
@@ -1424,11 +1431,17 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
-  public async startPersonalInsight(grant: string): Promise<{ runId: string }> {
-    if (this.personalInsightPolicies.size !== 1) {
+  public async startPersonalInsight(
+    analysisId: string,
+    grant: string
+  ): Promise<{ runId: string }> {
+    const matches = [...this.personalInsightPolicies.entries()].filter(
+      ([, policy]) => policy.analysisId === analysisId
+    )
+    if (matches.length !== 1) {
       throw new PersonalInsightError('personal_insight_unavailable')
     }
-    const [environment, policy] = [...this.personalInsightPolicies.entries()][0]
+    const [environment, policy] = matches[0]
     const jobId = randomBytes(32).toString('hex')
     const runId = randomBytes(16).toString('hex')
     const at = policy.approvedAlgorithmImage.lastIndexOf('@')
@@ -1485,8 +1498,12 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
-  public hasPersonalInsight(): boolean {
-    return this.personalInsightPolicies.size === 1
+  public hasPersonalInsight(analysisId?: string): boolean {
+    return analysisId
+      ? [...this.personalInsightPolicies.values()].some(
+          (policy) => policy.analysisId === analysisId
+        )
+      : this.personalInsightPolicies.size > 0
   }
 
   private async getPersonalInsightJob(runId: string): Promise<DBComputeJob | null> {
@@ -3910,7 +3927,7 @@ export class C2DEngineDocker extends C2DEngine {
       )
       job.privateInputChecksum = provisioned.checksum
       const dataset = readFileSync(datasetPath)
-      validatePersonalInsightInput(dataset)
+      validatePersonalInsightInput(dataset, policy)
       const writer = await container.exec({
         Cmd: [
           'sh',

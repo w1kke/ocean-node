@@ -13,6 +13,8 @@ import { validateConsumerResultContract } from './consumerResult.js'
 const RUN_ID = /^[0-9a-f]{32}$/
 const JOB_ID = /^[0-9a-f]{64}$/
 const SHA256 = /^[0-9a-f]{64}$/
+const METHODS_CANDIDATE_SHA256 =
+  '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -99,6 +101,42 @@ function isLocalProofHostname(hostname: string): boolean {
   return hostname === 'localhost' || loopbackIpv4 || singleLabel
 }
 
+function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
+  if (
+    policy.maximumRecordings !== 16 ||
+    policy.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+    policy.useClass !== 'methods_only' ||
+    policy.clinicalUse !== 'prohibited'
+  ) {
+    return false
+  }
+  if (policy.analysisId === 'brainstem.personal-resting-heart-overview/v1') {
+    return (
+      policy.algorithmVersion === '1.0.0' &&
+      policy.inputSchema === 'brainstem.personal-resting-rr/v1' &&
+      policy.inputPolicy === 'brainstem.personal-resting-rr/latest-16/v1' &&
+      policy.resultContract === 'brainstem.c2d-result/v1' &&
+      policy.resultProfile === 'brainstem.personal-resting-heart-overview/v1' &&
+      policy.candidateManifestSha256 === null &&
+      policy.approvedManifestSha256 === null &&
+      policy.referenceSha256 === null
+    )
+  }
+  return (
+    policy.analysisId === 'brainstem.resting-hrv-methods/v1' &&
+    policy.algorithmVersion === '0.1.0' &&
+    policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1' &&
+    policy.inputPolicy === 'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
+    policy.resultContract === 'brainstem.insight-result/v1' &&
+    policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
+    policy.candidateManifestSha256 === METHODS_CANDIDATE_SHA256 &&
+    typeof policy.approvedManifestSha256 === 'string' &&
+    SHA256.test(policy.approvedManifestSha256) &&
+    typeof policy.referenceSha256 === 'string' &&
+    SHA256.test(policy.referenceSha256)
+  )
+}
+
 function privateTransportPolicy(policy: PersonalInsightPolicy) {
   return {
     url: endpoint(policy, '/api/v1/internal/personal-insights/dataset'),
@@ -114,6 +152,9 @@ export function assertPersonalInsightConfiguration(
   policy: PersonalInsightPolicy,
   environment: NodeJS.ProcessEnv = process.env
 ): void {
+  if (!isExactNamedPolicy(policy)) {
+    throw new PersonalInsightError('personal_insight_policy_invalid')
+  }
   const url = new URL(policy.crabUrl)
   if (
     url.protocol !== 'https:' &&
@@ -197,7 +238,7 @@ export async function claimPersonalInsightGrant(
     await postCrab(
       policy,
       '/api/v1/internal/personal-insights/grants/claim',
-      { grant, jobId, runId },
+      { analysisId: policy.analysisId, grant, jobId, runId },
       environment
     ),
     ['result'],
@@ -207,12 +248,20 @@ export async function claimPersonalInsightGrant(
     body.result,
     [
       'status',
+      'analysisId',
+      'algorithmVersion',
       'expiresAt',
       'algorithmImageDigest',
       'inputSchema',
       'inputPolicy',
       'resultSchema',
       'resultProfile',
+      'candidateManifestSha256',
+      'approvedManifestSha256',
+      'referenceSha256',
+      'evidenceTier',
+      'useClass',
+      'clinicalUse',
       'maximumRecordings',
       'audience',
       'historyId'
@@ -221,13 +270,21 @@ export async function claimPersonalInsightGrant(
   )
   if (
     result.status !== 'claimed' ||
+    result.analysisId !== policy.analysisId ||
+    result.algorithmVersion !== policy.algorithmVersion ||
     !validTimestamp(result.expiresAt) ||
     result.algorithmImageDigest !== policy.approvedAlgorithmImage.split('@').at(-1) ||
     result.inputSchema !== policy.inputSchema ||
     result.inputPolicy !== policy.inputPolicy ||
     result.resultSchema !== policy.resultContract ||
     result.resultProfile !== policy.resultProfile ||
-    result.maximumRecordings !== 16 ||
+    result.candidateManifestSha256 !== policy.candidateManifestSha256 ||
+    result.approvedManifestSha256 !== policy.approvedManifestSha256 ||
+    result.referenceSha256 !== policy.referenceSha256 ||
+    result.evidenceTier !== policy.evidenceTier ||
+    result.useClass !== policy.useClass ||
+    result.clinicalUse !== policy.clinicalUse ||
+    result.maximumRecordings !== policy.maximumRecordings ||
     result.audience !== policy.audience ||
     !SHA256.test(result.historyId)
   ) {
@@ -258,7 +315,7 @@ export async function completePersonalInsightRun(
       response = await postCrab(
         policy,
         '/api/v1/internal/personal-insights/runs/complete',
-        { grant, jobId, runId, resultSha256 },
+        { analysisId: policy.analysisId, grant, jobId, runId, resultSha256 },
         environment
       )
       break
@@ -298,7 +355,7 @@ export async function revalidatePersonalInsightRun(
     await postCrab(
       policy,
       '/api/v1/internal/personal-insights/runs/revalidate',
-      { grant, jobId, runId },
+      { analysisId: policy.analysisId, grant, jobId, runId },
       environment
     ),
     ['result'],
@@ -330,7 +387,7 @@ export async function revalidatePersonalInsightHistory(
     await postCrab(
       policy,
       '/api/v1/internal/personal-insights/history/revalidate',
-      { historyId },
+      { analysisId: policy.analysisId, historyId },
       environment
     ),
     ['result'],
@@ -360,7 +417,7 @@ export async function consumePersonalInsightCapability(
     await postCrab(
       policy,
       '/api/v1/internal/personal-insights/capabilities/consume',
-      { capability, runId, action },
+      { analysisId: policy.analysisId, capability, runId, action },
       environment
     ),
     ['result'],
@@ -398,7 +455,7 @@ export async function consumePersonalInsightHistoryCapability(
     await postCrab(
       policy,
       '/api/v1/internal/personal-insights/history/capabilities/consume',
-      { capability, historyId, action },
+      { analysisId: policy.analysisId, capability, historyId, action },
       environment
     ),
     ['result'],
@@ -441,6 +498,7 @@ export function downloadPersonalInsightDataset(
       Accept: 'application/json',
       'Accept-Encoding': 'identity',
       Authorization: `Bearer ${environment[policy.bearerTokenEnv]}`,
+      'X-Brainstem-Analysis-Id': policy.analysisId,
       'X-Brainstem-Personal-Grant': grant,
       'X-Ocean-Compute-Job-Id': jobId
     },
@@ -525,7 +583,7 @@ const personalResult = z
     }
   })
 
-const personalInput = z
+const legacyPersonalInput = z
   .object({
     schema: z.literal('brainstem.personal-resting-rr/v1'),
     policy: z.literal('brainstem.personal-resting-rr/latest-16/v1'),
@@ -547,14 +605,49 @@ const personalInput = z
   })
   .strict()
 
-export function validatePersonalInsightInput(bytes: Buffer): void {
+const methodsRecording = z
+  .object({
+    recordingType: z.literal('rest'),
+    durationSeconds: z.number().int().min(300).max(360),
+    rrIntervalsMs: z.array(z.number().finite().min(250).max(2000)).min(180).max(3600)
+  })
+  .strict()
+  .superRefine((recording, context) => {
+    const representedSeconds =
+      recording.rrIntervalsMs.reduce((total, value) => total + value, 0) / 1000
+    if (
+      Math.abs(representedSeconds - recording.durationSeconds) >
+      Math.max(5, recording.durationSeconds * 0.1)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'interval duration does not match durationSeconds'
+      })
+    }
+  })
+
+const methodsPersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-resting-hrv-methods/v1'),
+    recordings: z.array(methodsRecording).min(1).max(16)
+  })
+  .strict()
+
+export function validatePersonalInsightInput(
+  bytes: Buffer,
+  policy: PersonalInsightPolicy
+): void {
   let value: unknown
   try {
     value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   } catch {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }
-  if (!personalInput.safeParse(value).success) {
+  const input =
+    policy.inputSchema === 'brainstem.personal-resting-hrv-methods/v1'
+      ? methodsPersonalInput
+      : legacyPersonalInput
+  if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }
 }
@@ -573,6 +666,31 @@ export function validatePersonalInsightResult(
     value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
   } catch {
     throw new PersonalInsightError('personal_insight_result_invalid')
+  }
+  if (policy.resultContract === 'brainstem.insight-result/v1') {
+    const result = value as any
+    const complete = result.status === 'complete'
+    if (
+      result.analysisId !== policy.analysisId ||
+      result.scope !== 'personal' ||
+      result.evidence?.tier !== policy.evidenceTier ||
+      result.evidence?.useClass !== policy.useClass ||
+      result.evidence?.clinicalUse !== policy.clinicalUse ||
+      (complete &&
+        (result.paperClassification?.decision !== 'not_applicable' ||
+          result.paperClassification.label !== null ||
+          result.paperClassification.score !== null)) ||
+      (!complete && result.paperClassification !== null) ||
+      result.provenance?.algorithmVersion !== policy.algorithmVersion ||
+      result.provenance?.algorithmImageDigest !==
+        policy.approvedAlgorithmImage.split('@').at(-1) ||
+      result.provenance?.datasetSchemaVersion !== policy.inputSchema ||
+      result.provenance?.candidateManifestSha256 !== policy.candidateManifestSha256 ||
+      result.provenance?.referenceSha256 !== (complete ? policy.referenceSha256 : null)
+    ) {
+      throw new PersonalInsightError('personal_insight_result_invalid')
+    }
+    return
   }
   const result = personalResult.safeParse(value)
   if (

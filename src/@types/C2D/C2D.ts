@@ -114,7 +114,7 @@ export type ConsumerResultPolicy =
   | {
       mode: 'singleJson'
       maxBytes: number
-      resultContract?: 'brainstem.c2d-result/v1'
+      resultContract?: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
     }
 
 export interface PrivateDatasetPolicy {
@@ -135,16 +135,33 @@ export interface PrivateDatasetPolicy {
 }
 
 export interface PersonalInsightPolicy {
+  analysisId:
+    | 'brainstem.personal-resting-heart-overview/v1'
+    | 'brainstem.resting-hrv-methods/v1'
+  algorithmVersion: '1.0.0' | '0.1.0'
   crabUrl: string
   approvedAlgorithmImage: string
+  candidateManifestSha256: string | null
+  approvedManifestSha256: string | null
+  referenceSha256: string | null
+  evidenceTier: 'E2_brainstem_compatible_exploratory'
+  useClass: 'methods_only'
+  clinicalUse: 'prohibited'
   bearerTokenEnv: string
   bffBearerTokenEnv: string
   ramWorkspaceRoot: string
-  inputSchema: 'brainstem.personal-resting-rr/v1'
-  inputPolicy: 'brainstem.personal-resting-rr/latest-16/v1'
-  resultContract: 'brainstem.c2d-result/v1'
-  resultProfile: 'brainstem.personal-resting-heart-overview/v1'
+  inputSchema:
+    | 'brainstem.personal-resting-rr/v1'
+    | 'brainstem.personal-resting-hrv-methods/v1'
+  inputPolicy:
+    | 'brainstem.personal-resting-rr/latest-16/v1'
+    | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
+  resultContract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
+  resultProfile:
+    | 'brainstem.personal-resting-heart-overview/v1'
+    | 'brainstem.resting-hrv-methods-personal/v1'
   audience: 'brainstem-ocean-node'
+  maximumRecordings: 16
   maxInputBytes: number
   maxResultBytes: number
   maxJobDuration: number
@@ -375,7 +392,7 @@ export interface DBComputeJobPayment {
 }
 
 export interface DBComputeResultValidation {
-  contract: 'brainstem.c2d-result/v1'
+  contract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
   status: 'complete' | 'insufficient_data' | 'failed'
   billable: boolean
   algorithmVersion?: string
