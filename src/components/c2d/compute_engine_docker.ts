@@ -66,7 +66,8 @@ import { KeyManager } from '../KeyManager/index.js'
 import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.js'
 import {
   readSingleJsonResultArchive,
-  validateConsumerResultContract
+  validateConsumerResultContract,
+  validateReviewedInsightResult
 } from './consumerResult.js'
 import {
   decideSettlement,
@@ -2859,6 +2860,20 @@ export class C2DEngineDocker extends C2DEngine {
           )
           if (personalPolicy) {
             validatePersonalInsightResult(singleJsonResult, personalPolicy)
+          }
+          if (privatePolicy?.paperInsight) {
+            validateReviewedInsightResult(singleJsonResult, {
+              analysisId: privatePolicy.analysisId,
+              scope: 'cohort',
+              algorithmVersion: privatePolicy.paperInsight.algorithmVersion,
+              algorithmImageDigest: approvedAlgorithmDigest,
+              inputSchema: privatePolicy.paperInsight.inputSchema,
+              candidateManifestSha256: privatePolicy.paperInsight.candidateManifestSha256,
+              referenceSha256: null,
+              evidenceTier: privatePolicy.paperInsight.evidenceTier,
+              useClass: privatePolicy.paperInsight.useClass,
+              clinicalUse: privatePolicy.paperInsight.clinicalUse
+            })
           }
         } catch (e) {
           CORE_LOGGER.error('Failed to validate result.json: ' + e.message)

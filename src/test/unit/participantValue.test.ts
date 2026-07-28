@@ -32,6 +32,7 @@ function job(status: 'complete' | 'insufficient_data' = 'complete'): DBComputeJo
 
 function policy(url: string): PrivateDatasetPolicy {
   return {
+    analysisId: 'brainstem.resting-rr-cohort-summary/v1',
     url: `${url}/api/v1/internal/c2d/rr-cohort`,
     maxBytes: 1024,
     approvedAlgorithmImage: `brainstem/private-rr@sha256:${'c'.repeat(64)}`,

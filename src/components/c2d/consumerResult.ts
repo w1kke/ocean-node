@@ -299,6 +299,52 @@ export function validateConsumerResultContract(
   }
 }
 
+export function validateReviewedInsightResult(
+  bytes: Buffer,
+  expected: {
+    analysisId: string
+    scope: 'cohort' | 'personal'
+    algorithmVersion: string
+    algorithmImageDigest: string
+    inputSchema: string
+    candidateManifestSha256: string
+    referenceSha256: string | null
+    evidenceTier: string
+    useClass: string
+    clinicalUse: 'prohibited'
+  }
+): void {
+  validateConsumerResultContract(
+    bytes,
+    {
+      mode: 'singleJson',
+      maxBytes: bytes.length,
+      resultContract: 'brainstem.insight-result/v1'
+    },
+    expected.algorithmImageDigest
+  )
+  const result = JSON.parse(bytes.toString('utf8'))
+  const complete = result.status === 'complete'
+  if (
+    result.analysisId !== expected.analysisId ||
+    result.scope !== expected.scope ||
+    result.evidence?.tier !== expected.evidenceTier ||
+    result.evidence?.useClass !== expected.useClass ||
+    result.evidence?.clinicalUse !== expected.clinicalUse ||
+    (complete &&
+      (result.paperClassification?.decision !== 'not_applicable' ||
+        result.paperClassification.label !== null ||
+        result.paperClassification.score !== null)) ||
+    (!complete && result.paperClassification !== null) ||
+    result.provenance?.algorithmVersion !== expected.algorithmVersion ||
+    result.provenance?.datasetSchemaVersion !== expected.inputSchema ||
+    result.provenance?.candidateManifestSha256 !== expected.candidateManifestSha256 ||
+    result.provenance?.referenceSha256 !== (complete ? expected.referenceSha256 : null)
+  ) {
+    throw new Error('result.json does not match the reviewed Insight policy')
+  }
+}
+
 export async function readSingleJsonResultArchive(
   archive: Readable,
   maxBytes: number

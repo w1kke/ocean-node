@@ -9,7 +9,8 @@ import path from 'path'
 
 import {
   readSingleJsonResultArchive,
-  validateConsumerResultContract
+  validateConsumerResultContract,
+  validateReviewedInsightResult
 } from '../../components/c2d/consumerResult.js'
 import {
   C2DStatusNumber,
@@ -190,6 +191,61 @@ describe('single JSON consumer result', () => {
         `sha256:${'b'.repeat(64)}`
       )
     ).to.throw('does not match execution')
+  })
+
+  it('binds a reviewed cohort result to its immutable evidence policy', () => {
+    const candidate = '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
+    const image = `sha256:${'a'.repeat(64)}`
+    const result: any = {
+      schema: 'brainstem.insight-result/v1',
+      analysisId: 'brainstem.resting-hrv-methods/v1',
+      scope: 'cohort',
+      status: 'complete',
+      abstentionReason: null,
+      evidence: {
+        tier: 'E2_brainstem_compatible_exploratory',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      },
+      paperClassification: {
+        decision: 'not_applicable',
+        label: null,
+        score: null
+      },
+      title: 'Resting heart variability methods',
+      summary: 'Disclosure-protected descriptive group result.',
+      metrics: [{ label: 'SDNN', value: 24.2, unit: 'ms' }],
+      charts: [],
+      table: null,
+      warnings: ['Descriptive research method only; not medical advice.'],
+      provenance: {
+        algorithmVersion: '0.1.0',
+        algorithmImageDigest: image,
+        datasetSchemaVersion: 'brainstem.resting-hrv-methods-cohort/v1',
+        generatedAt: '2026-07-28T00:00:00Z',
+        candidateManifestSha256: candidate,
+        referenceSha256: null
+      }
+    }
+    const expected = {
+      analysisId: 'brainstem.resting-hrv-methods/v1',
+      scope: 'cohort' as const,
+      algorithmVersion: '0.1.0',
+      algorithmImageDigest: image,
+      inputSchema: 'brainstem.resting-hrv-methods-cohort/v1',
+      candidateManifestSha256: candidate,
+      referenceSha256: null as null,
+      evidenceTier: 'E2_brainstem_compatible_exploratory',
+      useClass: 'methods_only',
+      clinicalUse: 'prohibited' as const
+    }
+    expect(() =>
+      validateReviewedInsightResult(Buffer.from(JSON.stringify(result)), expected)
+    ).not.to.throw()
+    result.scope = 'personal'
+    expect(() =>
+      validateReviewedInsightResult(Buffer.from(JSON.stringify(result)), expected)
+    ).to.throw('reviewed Insight policy')
   })
 
   it('publishes only validated bytes to local or remote storage', async () => {

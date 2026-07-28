@@ -98,6 +98,7 @@ function makeEngine(tempFolder: string, db: any): C2DEngineDocker {
     }
   } as any
   const policy: PrivateDatasetPolicy = {
+    analysisId: 'brainstem.resting-rr-cohort-summary/v1',
     url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
     maxBytes: 1024,
     approvedAlgorithmImage: `brainstem/private-rr@${ALGORITHM_DIGEST}`,

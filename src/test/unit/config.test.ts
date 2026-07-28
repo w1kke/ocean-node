@@ -123,6 +123,7 @@ describe('Should require an explicit consumer result policy', () => {
 
   it('validates and identity-binds a private dataset policy', () => {
     const privateDataset = {
+      analysisId: 'brainstem.resting-rr-cohort-summary/v1' as const,
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
@@ -144,6 +145,46 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset
       }).success
     ).to.equal(true)
+    const reviewedMethods = {
+      ...privateDataset,
+      analysisId: 'brainstem.resting-hrv-methods/v1',
+      participantValue: undefined as undefined,
+      paperInsight: {
+        algorithmVersion: '0.1.0',
+        inputSchema: 'brainstem.resting-hrv-methods-cohort/v1',
+        candidateManifestSha256:
+          '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1',
+        approvedManifestSha256: 'c'.repeat(64),
+        referenceSha256: 'd'.repeat(64),
+        evidenceTier: 'E2_brainstem_compatible_exploratory',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      }
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.insight-result/v1'
+        },
+        privateDataset: reviewedMethods
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: reviewedMethods
+      }).success
+    ).to.equal(false)
 
     const withoutPolicy = createComputeEnvironmentId(
       'cluster',
@@ -201,6 +242,7 @@ describe('Should require an explicit consumer result policy', () => {
 
   it('rejects unbounded or mutable private dataset policies', () => {
     const policy = {
+      analysisId: 'brainstem.resting-rr-cohort-summary/v1' as const,
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
@@ -251,6 +293,7 @@ describe('Should require an explicit consumer result policy', () => {
 
   it('requires a bounded secret mount and matching HTTPS identity for mTLS', () => {
     const policy = {
+      analysisId: 'brainstem.resting-rr-cohort-summary/v1' as const,
       url: 'https://crab-export.internal/api/v1/internal/c2d/rr-cohort',
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
@@ -310,6 +353,7 @@ describe('Should require an explicit consumer result policy', () => {
 
   it('rejects private datasets in exfiltration-prone environments', () => {
     const privateDataset = {
+      analysisId: 'brainstem.resting-rr-cohort-summary/v1' as const,
       url: 'http://crab:8080/api/v1/internal/c2d/rr-cohort',
       maxBytes: 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,

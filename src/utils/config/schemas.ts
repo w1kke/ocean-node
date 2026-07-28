@@ -292,6 +292,10 @@ export const C2DEnvironmentConfigSchema = z
     consumerResultPolicy: ConsumerResultPolicySchema,
     privateDataset: z
       .object({
+        analysisId: z.enum([
+          'brainstem.resting-rr-cohort-summary/v1',
+          'brainstem.resting-hrv-methods/v1'
+        ]),
         url: z
           .string()
           .url()
@@ -309,6 +313,21 @@ export const C2DEnvironmentConfigSchema = z
           .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
         bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
         releaseId: z.string().regex(/^[0-9a-f]{64}$/),
+        paperInsight: z
+          .object({
+            algorithmVersion: z.literal('0.1.0'),
+            inputSchema: z.literal('brainstem.resting-hrv-methods-cohort/v1'),
+            candidateManifestSha256: z.literal(
+              '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
+            ),
+            approvedManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+            referenceSha256: z.string().regex(/^[0-9a-f]{64}$/),
+            evidenceTier: z.literal('E2_brainstem_compatible_exploratory'),
+            useClass: z.literal('methods_only'),
+            clinicalUse: z.literal('prohibited')
+          })
+          .strict()
+          .optional(),
         participantValue: z
           .object({
             crabSignerAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/)
@@ -332,6 +351,15 @@ export const C2DEnvironmentConfigSchema = z
           .optional()
       })
       .strict()
+      .refine(
+        (policy) =>
+          policy.analysisId === 'brainstem.resting-hrv-methods/v1'
+            ? policy.paperInsight !== undefined && policy.participantValue === undefined
+            : policy.paperInsight === undefined,
+        {
+          message: 'The reviewed paper policy must match the named cohort analysis'
+        }
+      )
       .optional(),
     personalInsight: z
       .object({
@@ -548,7 +576,10 @@ export const C2DEnvironmentConfigSchema = z
       !data.privateDataset ||
       (data.enableNetwork === false &&
         data.consumerResultPolicy.mode === 'singleJson' &&
-        data.consumerResultPolicy.resultContract === 'brainstem.c2d-result/v1' &&
+        data.consumerResultPolicy.resultContract ===
+          (data.privateDataset.paperInsight
+            ? 'brainstem.insight-result/v1'
+            : 'brainstem.c2d-result/v1') &&
         data.free?.allowImageBuild !== true),
     {
       message:

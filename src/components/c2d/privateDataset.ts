@@ -19,6 +19,11 @@ const JOB_ID = /^[0-9a-f]{64}$/
 const SHA256 = /^[0-9a-f]{64}$/
 const JOB_HEADER = 'x-ocean-compute-job-id'
 const RELEASE_HEADER = 'x-brainstem-cohort-release-id'
+const ANALYSIS_HEADER = 'x-brainstem-analysis-id'
+const METHODS_CANDIDATE_SHA256 =
+  '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
+type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
+  Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
 export class PrivateDatasetError extends Error {
   constructor(code: string) {
@@ -45,9 +50,28 @@ export function assertPrivateDatasetJob(
 }
 
 export function assertPrivateDatasetConfiguration(
-  policy: PrivateDatasetPolicy,
+  policy: PrivateTransportPolicy,
   environment: NodeJS.ProcessEnv = process.env
 ): void {
+  if (
+    policy.analysisId === 'brainstem.resting-rr-cohort-summary/v1' &&
+    policy.paperInsight !== undefined
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.resting-hrv-methods/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+      policy.paperInsight.inputSchema !== 'brainstem.resting-hrv-methods-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !== METHODS_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      !SHA256.test(policy.paperInsight.referenceSha256) ||
+      policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
   const bearerToken = environment[policy.bearerTokenEnv]
   if (
     typeof bearerToken !== 'string' ||
@@ -90,7 +114,7 @@ export function assertPrivateDatasetConfiguration(
 }
 
 export function privateDatasetHttpsAgent(
-  policy: PrivateDatasetPolicy
+  policy: PrivateTransportPolicy
 ): HttpsAgent | undefined {
   if (!policy.tls) return undefined
   return new HttpsAgent({
@@ -118,6 +142,9 @@ function requestHeaders(
     if (key.toLowerCase() === RELEASE_HEADER) {
       throw new PrivateDatasetError('private_dataset_release_header_is_reserved')
     }
+    if (key.toLowerCase() === ANALYSIS_HEADER) {
+      throw new PrivateDatasetError('private_dataset_analysis_header_is_reserved')
+    }
   }
   if (suppliedHeaders.length > 0) {
     throw new PrivateDatasetError('private_dataset_headers_not_allowed')
@@ -128,7 +155,8 @@ function requestHeaders(
     'Accept-Encoding': 'identity',
     Authorization: `Bearer ${environment[policy.bearerTokenEnv]}`,
     'X-Ocean-Compute-Job-Id': jobId,
-    'X-Brainstem-Cohort-Release-Id': policy.releaseId
+    'X-Brainstem-Cohort-Release-Id': policy.releaseId,
+    'X-Brainstem-Analysis-Id': policy.analysisId
   }
 }
 
@@ -139,7 +167,81 @@ function requiredHeader(value: unknown, pattern: RegExp, code: string): string {
   return value
 }
 
-export function downloadPrivateDataset(
+function validateReviewedCohortInput(
+  destination: string,
+  policy: PrivateDatasetPolicy
+): void {
+  if (!policy.paperInsight) return
+  try {
+    const dataset = JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(destination))
+    )
+    if (
+      !dataset ||
+      Array.isArray(dataset) ||
+      Object.keys(dataset).sort().join(',') !== 'participants,schema' ||
+      dataset.schema !== policy.paperInsight.inputSchema ||
+      !Array.isArray(dataset.participants) ||
+      dataset.participants.length > 1000
+    ) {
+      throw new Error('invalid dataset')
+    }
+    const subjects = new Set<string>()
+    for (const participant of dataset.participants) {
+      if (
+        !participant ||
+        Array.isArray(participant) ||
+        Object.keys(participant).sort().join(',') !== 'recordings,subjectId' ||
+        typeof participant.subjectId !== 'string' ||
+        !SHA256.test(participant.subjectId) ||
+        subjects.has(participant.subjectId) ||
+        !Array.isArray(participant.recordings) ||
+        participant.recordings.length < 1 ||
+        participant.recordings.length > 16
+      ) {
+        throw new Error('invalid participant')
+      }
+      subjects.add(participant.subjectId)
+      for (const recording of participant.recordings) {
+        if (
+          !recording ||
+          Array.isArray(recording) ||
+          Object.keys(recording).sort().join(',') !==
+            'durationSeconds,recordingType,rrIntervalsMs' ||
+          recording.recordingType !== 'rest' ||
+          !Number.isInteger(recording.durationSeconds) ||
+          recording.durationSeconds < 300 ||
+          recording.durationSeconds > 360 ||
+          !Array.isArray(recording.rrIntervalsMs) ||
+          recording.rrIntervalsMs.length < 180 ||
+          recording.rrIntervalsMs.length > 3600 ||
+          recording.rrIntervalsMs.some(
+            (value: unknown) =>
+              typeof value !== 'number' ||
+              !Number.isFinite(value) ||
+              value < 250 ||
+              value > 2000
+          ) ||
+          Math.abs(
+            recording.rrIntervalsMs.reduce(
+              (total: number, value: number) => total + value,
+              0
+            ) /
+              1000 -
+              recording.durationSeconds
+          ) > Math.max(5, recording.durationSeconds * 0.1)
+        ) {
+          throw new Error('invalid recording')
+        }
+      }
+    }
+  } catch {
+    rmSync(destination, { force: true })
+    throw new PrivateDatasetError('private_dataset_contract_invalid')
+  }
+}
+
+export async function downloadPrivateDataset(
   file: UrlFileObject,
   destination: string,
   jobId: string,
@@ -156,13 +258,15 @@ export function downloadPrivateDataset(
   ) {
     throw new PrivateDatasetError('private_dataset_url_not_allowed')
   }
-  return downloadVerifiedJson(
+  const result = await downloadVerifiedJson(
     policy.url,
     destination,
     policy.maxBytes,
     requestHeaders(file, jobId, policy, environment),
     privateDatasetHttpsAgent(policy)
   )
+  validateReviewedCohortInput(destination, policy)
+  return result
 }
 
 export async function downloadVerifiedJson(

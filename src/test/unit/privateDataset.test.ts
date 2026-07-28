@@ -34,6 +34,7 @@ describe('Private dataset provisioning', () => {
   let receivedJobId: string
   let receivedAuthorization: string
   let receivedReleaseId: string
+  let receivedAnalysisId: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
@@ -45,6 +46,7 @@ describe('Private dataset provisioning', () => {
     receivedJobId = ''
     receivedAuthorization = ''
     receivedReleaseId = ''
+    receivedAnalysisId = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
@@ -52,6 +54,7 @@ describe('Private dataset provisioning', () => {
       receivedJobId = String(request.headers['x-ocean-compute-job-id'] ?? '')
       receivedAuthorization = String(request.headers.authorization ?? '')
       receivedReleaseId = String(request.headers['x-brainstem-cohort-release-id'] ?? '')
+      receivedAnalysisId = String(request.headers['x-brainstem-analysis-id'] ?? '')
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
         response.end()
@@ -77,6 +80,7 @@ describe('Private dataset provisioning', () => {
     directory = mkdtempSync(path.join(tmpdir(), 'private-dataset-test-'))
     destination = path.join(directory, 'dataset.json')
     policy = {
+      analysisId: 'brainstem.resting-rr-cohort-summary/v1',
       url,
       maxBytes: 1024,
       approvedAlgorithmImage: IMAGE,
@@ -127,6 +131,7 @@ describe('Private dataset provisioning', () => {
       'Bearer generated-test-token-that-is-long-enough'
     )
     expect(receivedReleaseId).to.equal('c'.repeat(64))
+    expect(receivedAnalysisId).to.equal('brainstem.resting-rr-cohort-summary/v1')
     expect(readFileSync(destination)).to.deep.equal(body)
     expect(statSync(destination).mode & 0o777).to.equal(0o600)
     expect(result.bytes).to.equal(body.length)
@@ -145,6 +150,14 @@ describe('Private dataset provisioning', () => {
       'X-Brainstem-Cohort-Release-Id': 'researcher-controlled'
     }
     await expectFailure('private_dataset_release_header_is_reserved')
+    expect(requestCount).to.equal(0)
+  })
+
+  it('rejects caller control of the analysis header before fetching', async () => {
+    file.headers = {
+      'X-Brainstem-Analysis-Id': 'researcher-controlled'
+    }
+    await expectFailure('private_dataset_analysis_header_is_reserved')
     expect(requestCount).to.equal(0)
   })
 
@@ -208,6 +221,56 @@ describe('Private dataset provisioning', () => {
       PrivateDatasetError,
       'private_dataset_remote_output_not_allowed'
     )
+  })
+
+  it('accepts only the exact reviewed cohort contract', async () => {
+    policy = {
+      ...policy,
+      maxBytes: 64 * 1024,
+      analysisId: 'brainstem.resting-hrv-methods/v1',
+      paperInsight: {
+        algorithmVersion: '0.1.0',
+        inputSchema: 'brainstem.resting-hrv-methods-cohort/v1',
+        candidateManifestSha256:
+          '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1',
+        approvedManifestSha256: 'd'.repeat(64),
+        referenceSha256: 'e'.repeat(64),
+        evidenceTier: 'E2_brainstem_compatible_exploratory',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      }
+    }
+    const intervals = Array.from({ length: 330 }, (_, index) => 900 + (index % 7))
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-hrv-methods-cohort/v1',
+        participants: [
+          {
+            subjectId: '1'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'rest',
+                durationSeconds: 300,
+                rrIntervalsMs: intervals
+              }
+            ]
+          }
+        ]
+      })
+    )
+
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-methods/v1')
+    rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-hrv-methods-cohort/v1',
+        participants: [],
+        participantWallet: 'must-not-enter-compute'
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
   })
 
   it('fails closed on unsafe mTLS identity and key material', () => {

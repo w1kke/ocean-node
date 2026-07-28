@@ -8,7 +8,10 @@ import {
   downloadVerifiedJson,
   privateDatasetHttpsAgent
 } from './privateDataset.js'
-import { validateConsumerResultContract } from './consumerResult.js'
+import {
+  validateConsumerResultContract,
+  validateReviewedInsightResult
+} from './consumerResult.js'
 
 const RUN_ID = /^[0-9a-f]{32}$/
 const JOB_ID = /^[0-9a-f]{64}$/
@@ -668,26 +671,20 @@ export function validatePersonalInsightResult(
     throw new PersonalInsightError('personal_insight_result_invalid')
   }
   if (policy.resultContract === 'brainstem.insight-result/v1') {
-    const result = value as any
-    const complete = result.status === 'complete'
-    if (
-      result.analysisId !== policy.analysisId ||
-      result.scope !== 'personal' ||
-      result.evidence?.tier !== policy.evidenceTier ||
-      result.evidence?.useClass !== policy.useClass ||
-      result.evidence?.clinicalUse !== policy.clinicalUse ||
-      (complete &&
-        (result.paperClassification?.decision !== 'not_applicable' ||
-          result.paperClassification.label !== null ||
-          result.paperClassification.score !== null)) ||
-      (!complete && result.paperClassification !== null) ||
-      result.provenance?.algorithmVersion !== policy.algorithmVersion ||
-      result.provenance?.algorithmImageDigest !==
-        policy.approvedAlgorithmImage.split('@').at(-1) ||
-      result.provenance?.datasetSchemaVersion !== policy.inputSchema ||
-      result.provenance?.candidateManifestSha256 !== policy.candidateManifestSha256 ||
-      result.provenance?.referenceSha256 !== (complete ? policy.referenceSha256 : null)
-    ) {
+    try {
+      validateReviewedInsightResult(bytes, {
+        analysisId: policy.analysisId,
+        scope: 'personal',
+        algorithmVersion: policy.algorithmVersion,
+        algorithmImageDigest: policy.approvedAlgorithmImage.split('@').at(-1),
+        inputSchema: policy.inputSchema,
+        candidateManifestSha256: policy.candidateManifestSha256,
+        referenceSha256: policy.referenceSha256,
+        evidenceTier: policy.evidenceTier,
+        useClass: policy.useClass,
+        clinicalUse: policy.clinicalUse
+      })
+    } catch {
       throw new PersonalInsightError('personal_insight_result_invalid')
     }
     return

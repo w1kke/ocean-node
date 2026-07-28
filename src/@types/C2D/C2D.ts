@@ -118,11 +118,24 @@ export type ConsumerResultPolicy =
     }
 
 export interface PrivateDatasetPolicy {
+  analysisId:
+    | 'brainstem.resting-rr-cohort-summary/v1'
+    | 'brainstem.resting-hrv-methods/v1'
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
   bearerTokenEnv: string
   releaseId: string
+  paperInsight?: {
+    algorithmVersion: '0.1.0'
+    inputSchema: 'brainstem.resting-hrv-methods-cohort/v1'
+    candidateManifestSha256: string
+    approvedManifestSha256: string
+    referenceSha256: string
+    evidenceTier: 'E2_brainstem_compatible_exploratory'
+    useClass: 'methods_only'
+    clinicalUse: 'prohibited'
+  }
   participantValue?: {
     crabSignerAddress: string
   }
