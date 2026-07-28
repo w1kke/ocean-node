@@ -70,6 +70,30 @@ personalInsightRoutes.post(
 )
 
 personalInsightRoutes.post(
+  `${SERVICES_API_BASE_PATH}/personal-insights/history/status`,
+  async (req, res) => {
+    try {
+      const body = exactBody(req.body, ['historyId', 'capability'])
+      if (typeof body.historyId !== 'string' || typeof body.capability !== 'string') {
+        throw new Error('not_found')
+      }
+      const result = await req.oceanNode
+        .getC2DEngines()
+        .getPersonalInsightHistoryStatus(body.historyId, body.capability)
+      res
+        .status(200)
+        .set({
+          'Cache-Control': 'private, no-store',
+          'X-Content-Type-Options': 'nosniff'
+        })
+        .json(result)
+    } catch {
+      unavailable(res)
+    }
+  }
+)
+
+personalInsightRoutes.post(
   `${SERVICES_API_BASE_PATH}/personal-insights/runs/revalidate`,
   async (req, res) => {
     try {
@@ -104,6 +128,33 @@ personalInsightRoutes.post(
       const result = await req.oceanNode
         .getC2DEngines()
         .getPersonalInsightResult(body.runId, body.capability)
+      res
+        .status(200)
+        .set({
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': String(result.bytes.length),
+          'X-Content-SHA256': result.checksum,
+          'Cache-Control': 'private, no-store',
+          'X-Content-Type-Options': 'nosniff'
+        })
+        .send(result.bytes)
+    } catch {
+      unavailable(res)
+    }
+  }
+)
+
+personalInsightRoutes.post(
+  `${SERVICES_API_BASE_PATH}/personal-insights/history/result`,
+  async (req, res) => {
+    try {
+      const body = exactBody(req.body, ['historyId', 'capability'])
+      if (typeof body.historyId !== 'string' || typeof body.capability !== 'string') {
+        throw new Error('not_found')
+      }
+      const result = await req.oceanNode
+        .getC2DEngines()
+        .getPersonalInsightHistoryResult(body.historyId, body.capability)
       res
         .status(200)
         .set({

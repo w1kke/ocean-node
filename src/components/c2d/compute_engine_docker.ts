@@ -97,10 +97,12 @@ import {
   claimPersonalInsightGrant,
   completePersonalInsightRun,
   consumePersonalInsightCapability,
+  consumePersonalInsightHistoryCapability,
   downloadPersonalInsightDataset,
   PersonalInsightError,
   prepareRamWorkspace,
   purgeRamWorkspace,
+  revalidatePersonalInsightHistory,
   revalidatePersonalInsightRun,
   resetRamWorkspaceRoot,
   validatePersonalInsightInput,
@@ -115,6 +117,7 @@ export const TRIVY_IMAGE =
 const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
 const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
+const PERSONAL_INSIGHT_REVALIDATION_INTERVAL_MS = 5 * 60 * 1000
 
 export function getPersonalInsightImageExecution(config: {
   Entrypoint?: string | string[] | null
@@ -180,13 +183,15 @@ export class C2DEngineDocker extends C2DEngine {
   private privateDatasetPolicies: Map<string, PrivateDatasetPolicy> = new Map()
   private personalInsightPolicies: Map<string, PersonalInsightPolicy> = new Map()
   private personalInsightGrants: Map<string, string> = new Map()
-  private pendingPersonalRuns: Map<string, string> = new Map()
+  private pendingPersonalRuns: Map<string, { runId: string; historyId: string }> =
+    new Map()
 
   public docker: Dockerode
   private cronTimer: any
   private cronTime: number = 2000
   private jobImageSizes: Map<string, number> = new Map()
   private isInternalLoopRunning: boolean = false
+  private nextPersonalInsightRevalidationAt: number = 0
   private imageCleanupInitialTimer: NodeJS.Timeout | null = null
   private imageCleanupTimer: NodeJS.Timeout | null = null
   private paymentClaimInitialTimer: NodeJS.Timeout | null = null
@@ -580,6 +585,13 @@ export class C2DEngineDocker extends C2DEngine {
     // Rebuild CPU allocations from running containers (handles node restart)
     await this.rebuildCpuAllocations()
     await this.recoverPrivateJobMaterial()
+    await this.revalidateRetainedPersonalInsightHistory().catch((error) => {
+      CORE_LOGGER.warn(
+        `Retained Personal Insight revalidation deferred: ${error.message}`
+      )
+    })
+    this.nextPersonalInsightRevalidationAt =
+      Date.now() + PERSONAL_INSIGHT_REVALIDATION_INTERVAL_MS
 
     // only now set the timer
     if (!this.cronTimer) {
@@ -1439,9 +1451,9 @@ export class C2DEngineDocker extends C2DEngine {
       }
     ] as unknown as ComputeAsset[]
 
-    this.pendingPersonalRuns.set(jobId, runId)
     try {
-      await claimPersonalInsightGrant(policy, grant, jobId, runId)
+      const historyId = await claimPersonalInsightGrant(policy, grant, jobId, runId)
+      this.pendingPersonalRuns.set(jobId, { runId, historyId })
       this.personalInsightGrants.set(jobId, grant)
       const jobs = await this.startComputeJob(
         assets,
@@ -1483,6 +1495,20 @@ export class C2DEngineDocker extends C2DEngine {
     const matches = jobs.filter(
       (job) =>
         job.personalInsightRunId === runId &&
+        this.personalInsightPolicies.has(job.environment)
+    )
+    return matches.length === 1 ? matches[0] : null
+  }
+
+  private async getPersonalInsightHistoryJob(
+    historyId: string
+  ): Promise<DBComputeJob | null> {
+    if (!/^[0-9a-f]{64}$/.test(historyId)) return null
+    // ponytail: retained personal jobs are few; add an indexed DB lookup if this scan becomes measurable.
+    const jobs = await this.db.getJobs([...this.personalInsightPolicies.keys()])
+    const matches = jobs.filter(
+      (job) =>
+        job.personalInsightHistoryId === historyId &&
         this.personalInsightPolicies.has(job.environment)
     )
     return matches.length === 1 ? matches[0] : null
@@ -1543,11 +1569,35 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
-  public async getPersonalInsightStatus(
-    runId: string,
-    capability: string
-  ): Promise<{ status: 'queued' | 'running' | 'complete' | 'failed' }> {
-    const { job } = await this.authorizePersonalInsightRead(runId, capability, 'status')
+  private async authorizePersonalInsightHistoryRead(
+    historyId: string,
+    capability: string,
+    action: 'status' | 'result'
+  ): Promise<{ job: DBComputeJob; checksum: string | null }> {
+    const job = await this.getPersonalInsightHistoryJob(historyId)
+    if (!job || job.personalInsightState === 'rejected') {
+      throw new PersonalInsightError('personal_insight_not_found')
+    }
+    const policy = this.personalInsightPolicies.get(job.environment)
+    try {
+      const checksum = await consumePersonalInsightHistoryCapability(
+        policy,
+        capability,
+        historyId,
+        action
+      )
+      return { job, checksum }
+    } catch (error) {
+      if (error instanceof PersonalInsightError && error.terminal) {
+        await this.rejectPersonalInsightJob(job)
+      }
+      throw error
+    }
+  }
+
+  private personalInsightStatus(job: DBComputeJob): {
+    status: 'queued' | 'running' | 'complete' | 'failed'
+  } {
     if (
       job.personalInsightState === 'complete' &&
       job.privateResultRetention?.cleanupState === 'complete' &&
@@ -1568,15 +1618,30 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
-  public async getPersonalInsightResult(
+  public async getPersonalInsightStatus(
     runId: string,
     capability: string
-  ): Promise<{ bytes: Buffer; checksum: string }> {
-    const { job, checksum } = await this.authorizePersonalInsightRead(
-      runId,
+  ): Promise<{ status: 'queued' | 'running' | 'complete' | 'failed' }> {
+    const { job } = await this.authorizePersonalInsightRead(runId, capability, 'status')
+    return this.personalInsightStatus(job)
+  }
+
+  public async getPersonalInsightHistoryStatus(
+    historyId: string,
+    capability: string
+  ): Promise<{ status: 'queued' | 'running' | 'complete' | 'failed' }> {
+    const { job } = await this.authorizePersonalInsightHistoryRead(
+      historyId,
       capability,
-      'result'
+      'status'
     )
+    return this.personalInsightStatus(job)
+  }
+
+  private personalInsightResult(
+    job: DBComputeJob,
+    checksum: string | null
+  ): { bytes: Buffer; checksum: string } {
     const retained = job.privateResultRetention
     if (
       job.personalInsightState !== 'complete' ||
@@ -1602,6 +1667,30 @@ export class C2DEngineDocker extends C2DEngine {
       throw new PersonalInsightError('personal_insight_not_found')
     }
     return { bytes, checksum }
+  }
+
+  public async getPersonalInsightResult(
+    runId: string,
+    capability: string
+  ): Promise<{ bytes: Buffer; checksum: string }> {
+    const { job, checksum } = await this.authorizePersonalInsightRead(
+      runId,
+      capability,
+      'result'
+    )
+    return this.personalInsightResult(job, checksum)
+  }
+
+  public async getPersonalInsightHistoryResult(
+    historyId: string,
+    capability: string
+  ): Promise<{ bytes: Buffer; checksum: string }> {
+    const { job, checksum } = await this.authorizePersonalInsightHistoryRead(
+      historyId,
+      capability,
+      'result'
+    )
+    return this.personalInsightResult(job, checksum)
   }
 
   public async revalidatePersonalInsight(
@@ -1633,6 +1722,32 @@ export class C2DEngineDocker extends C2DEngine {
     }
   }
 
+  private async revalidateRetainedPersonalInsightHistory(): Promise<void> {
+    const environments = [...this.personalInsightPolicies.keys()]
+    if (environments.length === 0) return
+    for (const job of await this.db.getJobs(environments)) {
+      if (
+        job.personalInsightState !== 'complete' ||
+        !job.personalInsightHistoryId ||
+        job.privateResultRetention?.resultDeletedAt
+      ) {
+        continue
+      }
+      try {
+        await revalidatePersonalInsightHistory(
+          this.personalInsightPolicies.get(job.environment),
+          job.personalInsightHistoryId
+        )
+      } catch (error) {
+        if (error instanceof PersonalInsightError && error.terminal) {
+          await this.rejectPersonalInsightJob(job)
+        } else {
+          CORE_LOGGER.debug('Retained Personal Insight revalidation deferred')
+        }
+      }
+    }
+  }
+
   // eslint-disable-next-line require-await
   public override async startComputeJob(
     assets: ComputeAsset[],
@@ -1661,8 +1776,9 @@ export class C2DEngineDocker extends C2DEngine {
     }
 
     const envIdWithHash = environment && environment.indexOf('-') > -1
-    const personalRunId = this.pendingPersonalRuns.get(jobId)
-    const env = personalRunId
+    const personalRun = this.pendingPersonalRuns.get(jobId)
+    const personalRunId = personalRun?.runId
+    const env = personalRun
       ? this.envs.find((candidate) => candidate.id === environment)
       : await this.getComputeEnvironment(
           payment && payment.chainId ? payment.chainId : null,
@@ -1813,6 +1929,7 @@ export class C2DEngineDocker extends C2DEngine {
     }
     if (personalRunId) {
       job.personalInsightRunId = personalRunId
+      job.personalInsightHistoryId = personalRun?.historyId
       job.personalInsightState = 'pending'
     }
 
@@ -2031,6 +2148,14 @@ export class C2DEngineDocker extends C2DEngine {
       this.cronTimer = null
     }
     try {
+      if (
+        this.personalInsightPolicies.size > 0 &&
+        Date.now() >= this.nextPersonalInsightRevalidationAt
+      ) {
+        this.nextPersonalInsightRevalidationAt =
+          Date.now() + PERSONAL_INSIGHT_REVALIDATION_INTERVAL_MS
+        await this.revalidateRetainedPersonalInsightHistory()
+      }
       // get all running jobs
       const jobs = await this.db.getRunningJobs(this.getC2DConfig().hash)
 

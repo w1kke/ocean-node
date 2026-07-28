@@ -178,6 +178,26 @@ export class C2DEngines {
     return this.getPersonalInsightEngine().getPersonalInsightResult(runId, capability)
   }
 
+  getPersonalInsightHistoryStatus(
+    historyId: string,
+    capability: string
+  ): Promise<{ status: 'queued' | 'running' | 'complete' | 'failed' }> {
+    return this.getPersonalInsightEngine().getPersonalInsightHistoryStatus(
+      historyId,
+      capability
+    )
+  }
+
+  getPersonalInsightHistoryResult(
+    historyId: string,
+    capability: string
+  ): Promise<{ bytes: Buffer; checksum: string }> {
+    return this.getPersonalInsightEngine().getPersonalInsightHistoryResult(
+      historyId,
+      capability
+    )
+  }
+
   revalidatePersonalInsight(
     grant: string,
     runId: string,

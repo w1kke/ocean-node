@@ -20,8 +20,10 @@ import {
   claimPersonalInsightGrant,
   completePersonalInsightRun,
   consumePersonalInsightCapability,
+  consumePersonalInsightHistoryCapability,
   downloadPersonalInsightDataset,
   PersonalInsightError,
+  revalidatePersonalInsightHistory,
   revalidatePersonalInsightRun,
   validatePersonalInsightInput,
   validatePersonalInsightResult
@@ -38,6 +40,7 @@ import { personalInsightRoutes } from '../../components/httpRoutes/personalInsig
 
 const JOB_ID = 'a'.repeat(64)
 const RUN_ID = 'b'.repeat(32)
+const HISTORY_ID = '0'.repeat(64)
 const GRANT = `grant-id.${'c'.repeat(43)}`
 const CAPABILITY = `capability-id.${'d'.repeat(43)}`
 const IMAGE = `brainstem/personal-resting@sha256:${'e'.repeat(64)}`
@@ -123,6 +126,7 @@ describe('personal Insight boundary', () => {
   let requests: Array<{ url: string; authorization: string; body: any; headers: any }>
   let revalidationStatus: number
   let capabilityStatus: number
+  let authorizedChecksum: string
   let completionConnectionFailures: number
 
   beforeEach(async () => {
@@ -131,6 +135,7 @@ describe('personal Insight boundary', () => {
     requests = []
     revalidationStatus = 200
     capabilityStatus = 200
+    authorizedChecksum = RESULT_CHECKSUM
     completionConnectionFailures = 0
     const dataset = Buffer.from(JSON.stringify(input()))
     server = createServer((request, response) => {
@@ -158,7 +163,8 @@ describe('personal Insight boundary', () => {
                 resultSchema: 'brainstem.c2d-result/v1',
                 resultProfile: 'brainstem.personal-resting-heart-overview/v1',
                 maximumRecordings: 16,
-                audience: 'brainstem-ocean-node'
+                audience: 'brainstem-ocean-node',
+                historyId: HISTORY_ID
               }
             })
           )
@@ -201,7 +207,29 @@ describe('personal Insight boundary', () => {
           )
           return
         }
-        if (request.url?.endsWith('/capabilities/consume')) {
+        if (request.url?.endsWith('/history/revalidate')) {
+          if (revalidationStatus !== 200) {
+            response.writeHead(revalidationStatus, {
+              'Content-Type': 'application/json'
+            })
+            response.end(JSON.stringify({ error: 'not_found' }))
+            return
+          }
+          response.writeHead(200, { 'Content-Type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              result: {
+                status: 'authorized',
+                historyId: HISTORY_ID
+              }
+            })
+          )
+          return
+        }
+        if (
+          request.url?.endsWith('/capabilities/consume') &&
+          !request.url.includes('/history/')
+        ) {
           if (capabilityStatus !== 200) {
             response.writeHead(capabilityStatus, {
               'Content-Type': 'application/json'
@@ -216,7 +244,28 @@ describe('personal Insight boundary', () => {
                 status: 'authorized',
                 action: body.action,
                 runId: RUN_ID,
-                resultSha256: body.action === 'result' ? RESULT_CHECKSUM : null
+                resultSha256: body.action === 'result' ? authorizedChecksum : null
+              }
+            })
+          )
+          return
+        }
+        if (request.url?.endsWith('/history/capabilities/consume')) {
+          if (capabilityStatus !== 200) {
+            response.writeHead(capabilityStatus, {
+              'Content-Type': 'application/json'
+            })
+            response.end(JSON.stringify({ error: 'not_found' }))
+            return
+          }
+          response.writeHead(200, { 'Content-Type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              result: {
+                status: 'authorized',
+                action: body.action,
+                historyId: HISTORY_ID,
+                resultSha256: body.action === 'result' ? authorizedChecksum : null
               }
             })
           )
@@ -248,7 +297,9 @@ describe('personal Insight boundary', () => {
 
   it('binds claim, one fetch, completion and one-use action checks to Crab', async () => {
     const configured = policy(crabUrl)
-    await claimPersonalInsightGrant(configured, GRANT, JOB_ID, RUN_ID, environment)
+    expect(
+      await claimPersonalInsightGrant(configured, GRANT, JOB_ID, RUN_ID, environment)
+    ).to.equal(HISTORY_ID)
     const destination = path.join(directory, 'dataset.json')
     const fetched = await downloadPersonalInsightDataset(
       configured,
@@ -266,6 +317,7 @@ describe('personal Insight boundary', () => {
       environment
     )
     await revalidatePersonalInsightRun(configured, GRANT, JOB_ID, RUN_ID, environment)
+    await revalidatePersonalInsightHistory(configured, HISTORY_ID, environment)
     expect(
       await consumePersonalInsightCapability(
         configured,
@@ -284,14 +336,25 @@ describe('personal Insight boundary', () => {
         environment
       )
     ).to.equal(RESULT_CHECKSUM)
+    expect(
+      await consumePersonalInsightHistoryCapability(
+        configured,
+        CAPABILITY,
+        HISTORY_ID,
+        'result',
+        environment
+      )
+    ).to.equal(RESULT_CHECKSUM)
 
     expect(requests.map(({ url }) => url)).to.deep.equal([
       '/api/v1/internal/personal-insights/grants/claim',
       '/api/v1/internal/personal-insights/dataset',
       '/api/v1/internal/personal-insights/runs/complete',
       '/api/v1/internal/personal-insights/runs/revalidate',
+      '/api/v1/internal/personal-insights/history/revalidate',
       '/api/v1/internal/personal-insights/capabilities/consume',
-      '/api/v1/internal/personal-insights/capabilities/consume'
+      '/api/v1/internal/personal-insights/capabilities/consume',
+      '/api/v1/internal/personal-insights/history/capabilities/consume'
     ])
     expect(
       requests.every(
@@ -306,6 +369,7 @@ describe('personal Insight boundary', () => {
     })
     expect(requests[1].headers['x-brainstem-personal-grant']).to.equal(GRANT)
     expect(requests[1].headers['x-ocean-compute-job-id']).to.equal(JOB_ID)
+    expect(requests[4].body).to.deep.equal({ historyId: HISTORY_ID })
     expect(JSON.parse(readFileSync(destination, 'utf8'))).to.deep.equal(input())
     expect(fetched.bytes).to.equal(readFileSync(destination).length)
   })
@@ -432,6 +496,7 @@ describe('personal Insight boundary', () => {
       jobId: JOB_ID,
       jobIdHash: createHash('sha256').update(JOB_ID).digest('hex'),
       personalInsightRunId: RUN_ID,
+      personalInsightHistoryId: HISTORY_ID,
       personalInsightState: 'pending',
       environment: 'personal-env',
       owner: '0x0000000000000000000000000000000000000001',
@@ -493,6 +558,15 @@ describe('personal Insight boundary', () => {
     expect(await (engine as any).cleanupPrivateJobMaterial(job)).to.equal(true)
     expect(job.personalInsightState).to.equal('complete')
     expect(job.privateResultRetention?.resultChecksum).to.equal(resultSha256)
+    authorizedChecksum = resultSha256
+    const historyStatusCapability = `${CAPABILITY}-history-status`
+    expect(
+      await engine.getPersonalInsightHistoryStatus(HISTORY_ID, historyStatusCapability)
+    ).to.deep.equal({ status: 'complete' })
+    const historyResultCapability = `${CAPABILITY}-history-result`
+    expect(
+      await engine.getPersonalInsightHistoryResult(HISTORY_ID, historyResultCapability)
+    ).to.deep.equal({ bytes: resultBytes, checksum: resultSha256 })
     expect(
       requests.some(
         ({ url, body }) =>
@@ -534,7 +608,7 @@ describe('personal Insight boundary', () => {
     expect(existsSync(retainedResultPath)).to.equal(true)
 
     revalidationStatus = 410
-    await engine.revalidatePersonalInsight(GRANT, RUN_ID, `Bearer ${BFF_TOKEN}`)
+    await (engine as any).revalidateRetainedPersonalInsightHistory()
     expect(job.personalInsightState).to.equal('rejected')
     expect(existsSync(retainedResultPath)).to.equal(false)
     expect(job.privateResultRetention?.inputChecksum).to.equal(undefined)
@@ -637,6 +711,7 @@ describe('personal Insight boundary', () => {
     const job = {
       jobId: JOB_ID,
       personalInsightRunId: RUN_ID,
+      personalInsightHistoryId: HISTORY_ID,
       personalInsightState: 'pending',
       environment: 'personal-env',
       owner: '0x0000000000000000000000000000000000000001',
@@ -718,6 +793,7 @@ describe('personal Insight boundary', () => {
         getC2DEngines: () => ({
           startPersonalInsight: () => Promise.resolve({ runId: RUN_ID }),
           getPersonalInsightStatus: () => Promise.resolve({ status: 'complete' }),
+          getPersonalInsightHistoryStatus: () => Promise.resolve({ status: 'complete' }),
           revalidatePersonalInsight: (
             grant: string,
             runId: string,
@@ -733,6 +809,11 @@ describe('personal Insight boundary', () => {
             return Promise.resolve()
           },
           getPersonalInsightResult: () =>
+            Promise.resolve({
+              bytes: Buffer.from(JSON.stringify(result())),
+              checksum: RESULT_CHECKSUM
+            }),
+          getPersonalInsightHistoryResult: () =>
             Promise.resolve({
               bytes: Buffer.from(JSON.stringify(result())),
               checksum: RESULT_CHECKSUM
@@ -755,6 +836,11 @@ describe('personal Insight boundary', () => {
         capability: CAPABILITY
       })
       expect(status.data).to.deep.equal({ status: 'complete' })
+      const historyStatus = await axios.post(
+        `${base.replace('/runs', '/history')}/status`,
+        { historyId: HISTORY_ID, capability: CAPABILITY }
+      )
+      expect(historyStatus.data).to.deep.equal({ status: 'complete' })
       const unauthorizedRevalidation = await axios.post(
         `${base}/revalidate`,
         { grant: GRANT, runId: RUN_ID },
@@ -773,6 +859,11 @@ describe('personal Insight boundary', () => {
       })
       expect(response.headers['x-content-sha256']).to.equal(RESULT_CHECKSUM)
       expect(response.headers['cache-control']).to.equal('private, no-store')
+      const historyResult = await axios.post(
+        `${base.replace('/runs', '/history')}/result`,
+        { historyId: HISTORY_ID, capability: CAPABILITY }
+      )
+      expect(historyResult.headers['x-content-sha256']).to.equal(RESULT_CHECKSUM)
       const rejected = await axios.post(
         `${base}/start`,
         { grant: GRANT, environment: 'caller-controlled' },

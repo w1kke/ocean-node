@@ -189,7 +189,7 @@ export async function claimPersonalInsightGrant(
   jobId: string,
   runId: string,
   environment: NodeJS.ProcessEnv = process.env
-): Promise<void> {
+): Promise<string> {
   if (!isOpaqueToken(grant) || !JOB_ID.test(jobId) || !RUN_ID.test(runId)) {
     throw new PersonalInsightError('personal_insight_claim_invalid')
   }
@@ -214,7 +214,8 @@ export async function claimPersonalInsightGrant(
       'resultSchema',
       'resultProfile',
       'maximumRecordings',
-      'audience'
+      'audience',
+      'historyId'
     ],
     'personal_insight_claim_invalid'
   )
@@ -227,10 +228,12 @@ export async function claimPersonalInsightGrant(
     result.resultSchema !== policy.resultContract ||
     result.resultProfile !== policy.resultProfile ||
     result.maximumRecordings !== 16 ||
-    result.audience !== policy.audience
+    result.audience !== policy.audience ||
+    !SHA256.test(result.historyId)
   ) {
     throw new PersonalInsightError('personal_insight_claim_invalid')
   }
+  return result.historyId
 }
 
 export async function completePersonalInsightRun(
@@ -315,6 +318,34 @@ export async function revalidatePersonalInsightRun(
   }
 }
 
+export async function revalidatePersonalInsightHistory(
+  policy: PersonalInsightPolicy,
+  historyId: string,
+  environment: NodeJS.ProcessEnv = process.env
+): Promise<void> {
+  if (!SHA256.test(historyId)) {
+    throw new PersonalInsightError('personal_insight_revalidation_invalid')
+  }
+  const body = exactObject(
+    await postCrab(
+      policy,
+      '/api/v1/internal/personal-insights/history/revalidate',
+      { historyId },
+      environment
+    ),
+    ['result'],
+    'personal_insight_revalidation_invalid'
+  )
+  const result = exactObject(
+    body.result,
+    ['status', 'historyId'],
+    'personal_insight_revalidation_invalid'
+  )
+  if (result.status !== 'authorized' || result.historyId !== historyId) {
+    throw new PersonalInsightError('personal_insight_revalidation_invalid')
+  }
+}
+
 export async function consumePersonalInsightCapability(
   policy: PersonalInsightPolicy,
   capability: string,
@@ -346,6 +377,44 @@ export async function consumePersonalInsightCapability(
     result.status !== 'authorized' ||
     result.action !== action ||
     result.runId !== runId ||
+    !checksumValid
+  ) {
+    throw new PersonalInsightError('personal_insight_capability_invalid')
+  }
+  return result.resultSha256
+}
+
+export async function consumePersonalInsightHistoryCapability(
+  policy: PersonalInsightPolicy,
+  capability: string,
+  historyId: string,
+  action: 'status' | 'result',
+  environment: NodeJS.ProcessEnv = process.env
+): Promise<string | null> {
+  if (!isOpaqueToken(capability) || !SHA256.test(historyId)) {
+    throw new PersonalInsightError('personal_insight_capability_invalid')
+  }
+  const body = exactObject(
+    await postCrab(
+      policy,
+      '/api/v1/internal/personal-insights/history/capabilities/consume',
+      { capability, historyId, action },
+      environment
+    ),
+    ['result'],
+    'personal_insight_capability_invalid'
+  )
+  const result = exactObject(
+    body.result,
+    ['status', 'action', 'historyId', 'resultSha256'],
+    'personal_insight_capability_invalid'
+  )
+  const checksumValid =
+    action === 'status' ? result.resultSha256 === null : SHA256.test(result.resultSha256)
+  if (
+    result.status !== 'authorized' ||
+    result.action !== action ||
+    result.historyId !== historyId ||
     !checksumValid
   ) {
     throw new PersonalInsightError('personal_insight_capability_invalid')

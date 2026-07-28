@@ -451,6 +451,7 @@ export interface DBComputeJob extends ComputeJob {
   privateResultRetention?: DBPrivateResultRetention
   privateInputChecksum?: string
   personalInsightRunId?: string
+  personalInsightHistoryId?: string
   personalInsightState?: 'pending' | 'complete' | 'rejected'
   metadata?: DBComputeJobMetadata
   additionalViewers?: string[] // addresses of additional addresses that can get results
