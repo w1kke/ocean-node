@@ -118,6 +118,7 @@ export const TRIVY_IMAGE =
 const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
 const MAX_TRIVY_IMAGE_ARCHIVE_BYTES = 1024 * 1024 * 1024
 const MAX_TRIVY_DB_AGE_MS = 24 * 60 * 60 * 1000
+const TRIVY_DB_UPDATE_TMPFS_BYTES = 512 * 1024 * 1024
 export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
 const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
 
@@ -3254,7 +3255,10 @@ export class C2DEngineDocker extends C2DEngine {
       typeof algorithmImageDigest !== 'string' ||
       !/^sha256:[0-9a-f]{64}$/.test(algorithmImageDigest)
     ) {
-      return null
+      // Keep only the routing identifiers when a reviewed Insight fails before
+      // result validation. This lets the BFF surface the terminal failure while
+      // still dropping caller-supplied analysis/version/image claims.
+      return { purpose, insightId, resultSchema }
     }
     return {
       purpose,
@@ -4667,7 +4671,7 @@ export class C2DEngineDocker extends C2DEngine {
           ReadonlyRootfs: true,
           PidsLimit: 128,
           Tmpfs: {
-            '/tmp': 'rw,noexec,nosuid,nodev,size=67108864'
+            '/tmp': `rw,noexec,nosuid,nodev,size=${TRIVY_DB_UPDATE_TMPFS_BYTES}`
           }
         }
       })
