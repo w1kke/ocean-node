@@ -1,5 +1,5 @@
 /* eslint-disable security/detect-non-literal-fs-filename */
-import { Readable, PassThrough } from 'stream'
+import { Readable, PassThrough, Transform, Writable } from 'stream'
 import os from 'os'
 import path from 'path'
 import {
@@ -116,8 +116,18 @@ const C2D_CONTAINER_GID = 1000
 export const TRIVY_IMAGE =
   'aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c'
 const MAX_TRIVY_REPORT_BYTES = 10 * 1024 * 1024
+const MAX_TRIVY_IMAGE_ARCHIVE_BYTES = 1024 * 1024 * 1024
+const MAX_TRIVY_DB_AGE_MS = 24 * 60 * 60 * 1000
 export const PRIVATE_RESULT_RETENTION_SECONDS = 14 * 24 * 60 * 60
 const PRIVATE_RESULT_DIRECTORY = 'retained-private-results'
+
+function jobLogReference(job: Pick<DBComputeJob, 'jobId' | 'jobIdHash'>): string {
+  return (job.jobIdHash || create256Hash(job.jobId)).replace(/^0x/, '').slice(0, 16)
+}
+
+function jobIdLogReference(jobId: string): string {
+  return create256Hash(jobId).replace(/^0x/, '').slice(0, 16)
+}
 const PERSONAL_INSIGHT_REVALIDATION_INTERVAL_MS = 5 * 60 * 1000
 
 export function getPersonalInsightImageExecution(config: {
@@ -207,7 +217,9 @@ export class C2DEngineDocker extends C2DEngine {
   private scanImages: boolean
   private scanImageRejectSeverities: ImageScanSeverity[]
   private scanImageDBUpdateInterval: number
-  private trivyCachePath: string
+  private trivyCacheVolume: string
+  private trivyDatabaseUpdatedAt: number | null = null
+  private trivyDatabaseRefresh: Promise<void> | null = null
   private cpuAllocations: Map<string, number[]> = new Map()
   private envCpuCoresMap: Map<string, number[]> = new Map()
   private activeBuildAborts: Map<string, AbortController> = new Map()
@@ -257,17 +269,12 @@ export class C2DEngineDocker extends C2DEngine {
         CORE_LOGGER.error('Could not create Docker container: ' + e.message)
       }
     }
-    // trivy cache is the same for all engines
-    this.trivyCachePath = path.join(
-      process.cwd(),
-      this.getC2DConfig().tempFolder,
-      'trivy_cache'
-    )
+    this.trivyCacheVolume = `ocean-node-trivy-${create256Hash(this.getC2DConfig().hash)
+      .replace(/^0x/, '')
+      .slice(0, 32)}`
     try {
       if (!existsSync(this.getStoragePath()))
         mkdirSync(this.getStoragePath(), { recursive: true })
-      if (this.scanImages && !existsSync(this.trivyCachePath))
-        mkdirSync(this.trivyCachePath, { recursive: true })
     } catch (e) {
       CORE_LOGGER.error(
         'Could not create Docker container temporary folders: ' + e.message
@@ -533,12 +540,21 @@ export class C2DEngineDocker extends C2DEngine {
       )
 
       if (envDef.privateDataset) {
+        if (!this.scanImages) {
+          throw new Error('Private dataset compute requires fail-closed image scanning')
+        }
+        if (envDef.enableNetwork !== false) {
+          throw new Error('Private dataset compute requires networkless algorithms')
+        }
         assertPrivateDatasetConfiguration(envDef.privateDataset)
         this.privateDatasetPolicies.set(env.id, envDef.privateDataset)
       }
       if (envDef.personalInsight) {
         if (!this.scanImages) {
           throw new Error('Personal Insight requires fail-closed image scanning')
+        }
+        if (envDef.enableNetwork !== false) {
+          throw new Error('Personal Insight requires networkless algorithms')
         }
         assertPersonalInsightConfiguration(envDef.personalInsight)
         if (
@@ -729,6 +745,11 @@ export class C2DEngineDocker extends C2DEngine {
       this.scanDBUpdateTimer = null
       CORE_LOGGER.debug('Scan database update timer stopped')
     }
+    for (const policy of this.personalInsightPolicies.values()) {
+      resetRamWorkspaceRoot(policy)
+    }
+    this.personalInsightGrants.clear()
+    this.pendingPersonalRuns.clear()
     return Promise.resolve()
   }
 
@@ -779,7 +800,7 @@ export class C2DEngineDocker extends C2DEngine {
           await this.reconcileJobSettlement(job, chainLocks, currentTimestamp)
         } catch (error) {
           CORE_LOGGER.error(
-            `Failed to reconcile settlement for job ${job.jobId}: ${error.message}`
+            `Failed to reconcile settlement for job ${jobLogReference(job)}: ${error.message}`
           )
         }
       }
@@ -858,7 +879,7 @@ export class C2DEngineDocker extends C2DEngine {
     const payment = job.payment!
     const escrowAddress = this.escrow.getEscrowContractAddressForChain(payment.chainId)
     if (!escrowAddress) {
-      CORE_LOGGER.error(`No escrow address for settlement job ${job.jobId}`)
+      CORE_LOGGER.error(`No escrow address for settlement job ${jobLogReference(job)}`)
       return
     }
     const lock = locks.find(
@@ -901,12 +922,14 @@ export class C2DEngineDocker extends C2DEngine {
               proof
             )
         if (!preparedTransaction) {
-          CORE_LOGGER.warn(`Could not prepare settlement for job ${job.jobId}`)
+          CORE_LOGGER.warn(`Could not prepare settlement for job ${jobLogReference(job)}`)
           return
         }
       } else {
         if (!payment.lockTx) {
-          CORE_LOGGER.warn(`Missing lock transaction for settlement job ${job.jobId}`)
+          CORE_LOGGER.warn(
+            `Missing lock transaction for settlement job ${jobLogReference(job)}`
+          )
           return
         }
         const lockReceipt = await this.escrow.getSettlementTransactionReceipt(
@@ -914,7 +937,9 @@ export class C2DEngineDocker extends C2DEngine {
           payment.lockTx
         )
         if (!lockReceipt.confirmed || lockReceipt.blockNumber === undefined) {
-          CORE_LOGGER.warn(`Cannot establish settlement event range for job ${job.jobId}`)
+          CORE_LOGGER.warn(
+            `Cannot establish settlement event range for job ${jobLogReference(job)}`
+          )
           return
         }
         preparedBlock = lockReceipt.blockNumber
@@ -941,7 +966,7 @@ export class C2DEngineDocker extends C2DEngine {
       await this.db.insertSettlementIntent(expected)
       intent = await this.db.getSettlementByKey(settlementKey)
       if (!intent || !sameSettlementIntent(intent, expected)) {
-        throw new Error(`Conflicting settlement intent for job ${job.jobId}`)
+        throw new Error(`Conflicting settlement intent for job ${jobLogReference(job)}`)
       }
     }
 
@@ -998,7 +1023,9 @@ export class C2DEngineDocker extends C2DEngine {
       'broadcast',
       transactionHash
     )
-    CORE_LOGGER.info(`Broadcast settlement for job ${job.jobId}: ${transactionHash}`)
+    CORE_LOGGER.info(
+      `Broadcast settlement for job ${jobLogReference(job)}: ${transactionHash}`
+    )
   }
 
   private async reconcileSettlementEvent(
@@ -2278,7 +2305,7 @@ export class C2DEngineDocker extends C2DEngine {
   // eslint-disable-next-line require-await
   private async processJob(job: DBComputeJob) {
     CORE_LOGGER.info(
-      `Process job ${job.jobId} started: [STATUS: ${job.status}: ${job.statusText}]`
+      `Process job ${jobLogReference(job)} started: [STATUS: ${job.status}: ${job.statusText}]`
     )
 
     // has to :
@@ -2406,12 +2433,14 @@ export class C2DEngineDocker extends C2DEngine {
             return
           }
         } catch (error) {
-          CORE_LOGGER.error(`Image scan failed for job ${job.jobId}: ${error.message}`)
+          CORE_LOGGER.error(
+            `Image scan failed for job ${jobLogReference(job)}: ${error.message}`
+          )
           try {
             appendFileSync(imageLogFile, `Image scan failed: ${error.message}\n`)
-          } catch (logError) {
+          } catch {
             CORE_LOGGER.error(
-              `Could not write image scan log for job ${job.jobId}: ${logError.message}`
+              `Could not write image scan log for job ${jobLogReference(job)}`
             )
           }
           job.status = C2DStatusNumber.ImageScanFailed
@@ -2483,7 +2512,11 @@ export class C2DEngineDocker extends C2DEngine {
               }
             ]
       }
-      if (!env.enableNetwork) {
+      if (
+        this.privateDatasetPolicies.has(job.environment) ||
+        this.personalInsightPolicies.has(job.environment) ||
+        !env.enableNetwork
+      ) {
         hostConfig.NetworkMode = 'none' // no network inside the container
       }
       // disk
@@ -2596,7 +2629,7 @@ export class C2DEngineDocker extends C2DEngine {
         const fo = asset.fileObject as { bucketId?: string; fileName?: string }
         if (!fo.bucketId || !fo.fileName) {
           CORE_LOGGER.error(
-            `Job ${job.jobId} asset ${i}: nodePersistentStorage requires bucketId and fileName`
+            `Job ${jobLogReference(job)} asset ${i}: nodePersistentStorage requires bucketId and fileName`
           )
           job.status = C2DStatusNumber.DataProvisioningFailed
           job.statusText = C2DStatusText.DataProvisioningFailed
@@ -2609,7 +2642,7 @@ export class C2DEngineDocker extends C2DEngine {
         const ps = OceanNode.getInstance().getPersistentStorage()
         if (!ps) {
           CORE_LOGGER.error(
-            `Job ${job.jobId} asset ${i}: persistent storage is not configured on this node`
+            `Job ${jobLogReference(job)} asset ${i}: persistent storage is not configured on this node`
           )
           job.status = C2DStatusNumber.DataProvisioningFailed
           job.statusText = C2DStatusText.DataProvisioningFailed
@@ -2633,7 +2666,7 @@ export class C2DEngineDocker extends C2DEngine {
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e)
           CORE_LOGGER.error(
-            `Job ${job.jobId} asset ${i}: failed to resolve persistent storage bind: ${errMsg}`
+            `Job ${jobLogReference(job)} asset ${i}: failed to resolve persistent storage bind: ${errMsg}`
           )
           job.status = C2DStatusNumber.DataProvisioningFailed
           job.statusText = C2DStatusText.DataProvisioningFailed
@@ -2720,7 +2753,9 @@ export class C2DEngineDocker extends C2DEngine {
             job.isStarted = true
             job.algoStartTimestamp = String(Date.now() / 1000)
             await this.db.updateJob(job)
-            CORE_LOGGER.info(`Container started successfully for job ${job.jobId}`)
+            CORE_LOGGER.info(
+              `Container started successfully for job ${jobLogReference(job)}`
+            )
 
             await this.measureContainerBaseSize(job, container)
             return
@@ -2807,15 +2842,18 @@ export class C2DEngineDocker extends C2DEngine {
       try {
         container = this.docker.getContainer(job.jobId + '-algoritm')
       } catch (e) {
-        CORE_LOGGER.debug('Could not retrieve container: ' + e.message)
+        CORE_LOGGER.debug(`Could not retrieve container for ${jobLogReference(job)}`)
         job.isRunning = false
         job.dateFinished = String(Date.now() / 1000)
         try {
           const algoLogFile =
             this.getStoragePath() + '/' + job.jobId + '/data/logs/algorithm.log'
-          writeFileSync(algoLogFile, String(e.message))
-        } catch (e) {
-          CORE_LOGGER.error('Failed to write algorithm log file: ' + e.message)
+          writeFileSync(
+            algoLogFile,
+            this.isPrivateJob(job) ? 'Container unavailable' : String(e.message)
+          )
+        } catch {
+          CORE_LOGGER.error(`Failed to write algorithm log for ${jobLogReference(job)}`)
         }
         await this.db.updateJob(job)
         await this.cleanupJob(job)
@@ -2836,7 +2874,9 @@ export class C2DEngineDocker extends C2DEngine {
       let singleJsonResult: Buffer = null
 
       if (!container || !resultPolicy) {
-        CORE_LOGGER.error(`Missing result policy or container for job ${job.jobId}`)
+        CORE_LOGGER.error(
+          `Missing result policy or container for job ${jobLogReference(job)}`
+        )
         job.status = C2DStatusNumber.ResultsFetchFailed
         job.statusText = C2DStatusText.ResultsFetchFailed
       } else if (resultPolicy.mode === 'singleJson') {
@@ -3067,7 +3107,7 @@ export class C2DEngineDocker extends C2DEngine {
     if (existing && existing.length > 0) {
       const cpusetStr = existing.join(',')
       CORE_LOGGER.info(
-        `CPU affinity: reusing existing cores [${cpusetStr}] for job ${jobId}`
+        `CPU affinity: reusing existing cores [${cpusetStr}] for job ${jobIdLogReference(jobId)}`
       )
       return cpusetStr
     }
@@ -3089,14 +3129,16 @@ export class C2DEngineDocker extends C2DEngine {
 
     if (freeCores.length < count) {
       CORE_LOGGER.warn(
-        `CPU affinity: not enough free cores for job ${jobId} in env ${envId} (requested=${count}, available=${freeCores.length}/${envCores.length})`
+        `CPU affinity: not enough free cores for job ${jobIdLogReference(jobId)} in env ${envId} (requested=${count}, available=${freeCores.length}/${envCores.length})`
       )
       return null
     }
 
     this.cpuAllocations.set(jobId, freeCores)
     const cpusetStr = freeCores.join(',')
-    CORE_LOGGER.info(`CPU affinity: allocated cores [${cpusetStr}] to job ${jobId}`)
+    CORE_LOGGER.info(
+      `CPU affinity: allocated cores [${cpusetStr}] to job ${jobIdLogReference(jobId)}`
+    )
     return cpusetStr
   }
 
@@ -3104,7 +3146,7 @@ export class C2DEngineDocker extends C2DEngine {
     const cores = this.cpuAllocations.get(jobId)
     if (cores) {
       CORE_LOGGER.info(
-        `CPU affinity: released cores [${cores.join(',')}] from job ${jobId}`
+        `CPU affinity: released cores [${cores.join(',')}] from job ${jobIdLogReference(jobId)}`
       )
       this.cpuAllocations.delete(jobId)
     }
@@ -3127,7 +3169,7 @@ export class C2DEngineDocker extends C2DEngine {
             if (cores.length > 0) {
               this.cpuAllocations.set(job.jobId, cores)
               CORE_LOGGER.info(
-                `CPU affinity: recovered allocation [${cpuset}] for running job ${job.jobId}`
+                `CPU affinity: recovered allocation [${cpuset}] for running job ${jobLogReference(job)}`
               )
             }
           }
@@ -3484,22 +3526,17 @@ export class C2DEngineDocker extends C2DEngine {
         recursive: true,
         force: true
       })
-    } catch (e) {
-      console.error(
-        `Could not delete inputs from path ${this.getStoragePath()} for job ID ${
-          job.jobId
-        }! ` + e.message
-      )
+    } catch {
+      CORE_LOGGER.error(`Could not delete compute inputs for ${jobLogReference(job)}`)
     }
     try {
       rmSync(this.getStoragePath() + '/' + job.jobId + '/data/transformations', {
         recursive: true,
         force: true
       })
-    } catch (e) {
-      console.error(
-        `Could not delete algorithms from path ${this.getStoragePath()} for job ID ${job.jobId}! ` +
-          e.message
+    } catch {
+      CORE_LOGGER.error(
+        `Could not delete compute transformations for ${jobLogReference(job)}`
       )
     }
     const personalPolicy = this.personalInsightPolicies.get(job.environment)
@@ -3524,7 +3561,7 @@ export class C2DEngineDocker extends C2DEngine {
   ): Promise<void> {
     try {
       if (this.jobImageSizes.has(job.jobId)) {
-        CORE_LOGGER.debug(`Using cached base size for job ${job.jobId.slice(-8)}`)
+        CORE_LOGGER.debug(`Using cached base size for job ${jobLogReference(job)}`)
         return
       }
 
@@ -3604,18 +3641,18 @@ export class C2DEngineDocker extends C2DEngine {
     ).toFixed(1)
 
     CORE_LOGGER.info(
-      `Job ${job.jobId.slice(-8)} disk: ${usageGB}GB / ${quotaGB}GB (${usagePercent}%)`
+      `Job ${jobLogReference(job)} disk: ${usageGB}GB / ${quotaGB}GB (${usagePercent}%)`
     )
 
     if (algorithmUsage / 1024 / 1024 / 1024 > diskQuota) {
       CORE_LOGGER.warn(
-        `DISK QUOTA EXCEEDED - Stopping job ${job.jobId}: ${usageGB}GB used, ${quotaGB}GB allowed`
+        `DISK QUOTA EXCEEDED - Stopping job ${jobLogReference(job)}: ${usageGB}GB used, ${quotaGB}GB allowed`
       )
 
       try {
         const container = this.docker.getContainer(containerName)
         await container.stop()
-        CORE_LOGGER.info(`Container stopped for job ${job.jobId}`)
+        CORE_LOGGER.info(`Container stopped for job ${jobLogReference(job)}`)
       } catch (e) {
         CORE_LOGGER.warn(`Could not stop container: ${e.message}`)
       }
@@ -3629,7 +3666,7 @@ export class C2DEngineDocker extends C2DEngine {
 
       await this.db.updateJob(job)
       await this.cleanupJob(job)
-      CORE_LOGGER.info(`Job ${job.jobId} terminated - DISK QUOTA EXCEEDED`)
+      CORE_LOGGER.info(`Job ${jobLogReference(job)} terminated - DISK QUOTA EXCEEDED`)
 
       return false
     }
@@ -3717,7 +3754,7 @@ export class C2DEngineDocker extends C2DEngine {
             let logText = ''
             if (progress.id) logText += progress.id + ' : ' + progress.status
             else logText = progress.status
-            CORE_LOGGER.debug("Pulling image for jobId '" + job.jobId + "': " + logText)
+            CORE_LOGGER.debug(`Pulling image for job ${jobLogReference(job)}: ${logText}`)
             appendFileSync(imageLogFile, logText + '\n')
           }
         )
@@ -3792,7 +3829,7 @@ export class C2DEngineDocker extends C2DEngine {
           const text = JSON.parse(data.toString('utf8'))
           if (text && text.stream && typeof text.stream === 'string') {
             CORE_LOGGER.debug(
-              "Building image for jobId '" + job.jobId + "': " + text.stream.trim()
+              `Building image for job ${jobLogReference(job)}: ${text.stream.trim()}`
             )
             appendFileSync(imageLogFile, String(text.stream))
           }
@@ -4502,7 +4539,7 @@ export class C2DEngineDocker extends C2DEngine {
       ) {
         return true
       }
-      CORE_LOGGER.info('Cleaning up C2D storage for Job: ' + job.jobId)
+      CORE_LOGGER.info(`Cleaning up C2D storage for job ${jobLogReference(job)}`)
       let privateCleanupSucceeded = true
       // delete the storage
       // for free env, the container is deleted as soon as we download the results
@@ -4599,15 +4636,39 @@ export class C2DEngineDocker extends C2DEngine {
   }
 
   private async scanDBUpdate(): Promise<void> {
+    if (this.trivyDatabaseRefresh) return this.trivyDatabaseRefresh
+    this.trivyDatabaseRefresh = this.refreshScanDatabase()
+    try {
+      await this.trivyDatabaseRefresh
+    } finally {
+      this.trivyDatabaseRefresh = null
+    }
+  }
+
+  private async refreshScanDatabase(): Promise<void> {
     CORE_LOGGER.info('Starting Trivy database refresh cron')
     await this.checkscanDBImage()
+    await this.docker.createVolume({ Name: this.trivyCacheVolume })
     let updater: Dockerode.Container = null
     try {
       updater = await this.docker.createContainer({
         Image: TRIVY_IMAGE,
         Cmd: ['image', '--download-db-only'],
         HostConfig: {
-          Binds: [`${this.trivyCachePath}:/root/.cache/trivy`]
+          Mounts: [
+            {
+              Type: 'volume',
+              Source: this.trivyCacheVolume,
+              Target: '/root/.cache/trivy'
+            }
+          ],
+          CapDrop: ['ALL'],
+          SecurityOpt: ['no-new-privileges'],
+          ReadonlyRootfs: true,
+          PidsLimit: 128,
+          Tmpfs: {
+            '/tmp': 'rw,noexec,nosuid,nodev,size=67108864'
+          }
         }
       })
       await updater.start()
@@ -4615,39 +4676,117 @@ export class C2DEngineDocker extends C2DEngine {
       if (result?.StatusCode !== 0) {
         throw new Error(`Trivy database update exited with status ${result?.StatusCode}`)
       }
+      this.trivyDatabaseUpdatedAt = Date.now()
       CORE_LOGGER.info('Trivy database refreshed.')
     } finally {
       if (updater) await updater.remove({ force: true }).catch((): void => undefined)
     }
   }
 
+  private assertFreshScanDatabase(): void {
+    const updatedAt = this.trivyDatabaseUpdatedAt
+    if (
+      !Number.isSafeInteger(updatedAt) ||
+      updatedAt > Date.now() ||
+      Date.now() - updatedAt > MAX_TRIVY_DB_AGE_MS
+    ) {
+      throw new Error('Trivy database is missing or stale')
+    }
+  }
+
+  private async ensureFreshScanDatabase(): Promise<void> {
+    try {
+      this.assertFreshScanDatabase()
+    } catch {
+      await this.scanDBUpdate()
+      this.assertFreshScanDatabase()
+    }
+  }
+
+  private async sendImageToScanner(
+    scanner: Dockerode.Container,
+    imageName: string
+  ): Promise<void> {
+    let bytes = 0
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        bytes += buffer.length
+        if (bytes > MAX_TRIVY_IMAGE_ARCHIVE_BYTES) {
+          callback(new Error('Image archive exceeds the scan size limit'))
+          return
+        }
+        callback(null, buffer)
+      }
+    })
+    const input = await scanner.attach({
+      stream: true,
+      hijack: true,
+      stdin: true,
+      stdout: false,
+      stderr: false
+    })
+    const image = await this.docker.getImage(imageName).get()
+    const sink = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        if (input.write(chunk)) callback()
+        else input.once('drain', callback)
+      },
+      final(callback) {
+        input.end()
+        callback()
+      }
+    })
+    input.once('error', (error) => sink.destroy(error))
+    await scanner.start()
+    await pipeline(image, limiter, sink)
+  }
+
   private async scanImage(imageName: string): Promise<unknown> {
     if (!imageName || !imageName.trim()) throw new Error('Image name is empty')
     await this.checkscanDBImage()
+    await this.ensureFreshScanDatabase()
     CORE_LOGGER.debug(`Starting vulnerability check for ${imageName}`)
     let container: Dockerode.Container = null
     try {
       container = await this.docker.createContainer({
         Image: TRIVY_IMAGE,
+        Entrypoint: ['/bin/sh', '-ec'],
         Cmd: [
-          'image',
-          '--format',
-          'json',
-          '--quiet',
-          '--no-progress',
-          '--skip-db-update',
-          '--severity',
-          this.scanImageRejectSeverities.join(','),
-          imageName
+          'ln -s /cache/db /scanner-cache/db && cat > /scan/image.tar && ' +
+            'exec trivy image --format json --quiet --no-progress ' +
+            '--skip-db-update --offline-scan --cache-dir /scanner-cache ' +
+            `--severity ${this.scanImageRejectSeverities.join(',')} ` +
+            '--input /scan/image.tar'
         ],
+        User: `${C2D_CONTAINER_UID}:${C2D_CONTAINER_GID}`,
+        Env: ['HOME=/home/scanner'],
+        OpenStdin: true,
+        AttachStdin: true,
+        StdinOnce: true,
         HostConfig: {
-          Binds: [
-            '/var/run/docker.sock:/var/run/docker.sock',
-            `${this.trivyCachePath}:/root/.cache/trivy`
-          ]
+          Mounts: [
+            {
+              Type: 'volume',
+              Source: this.trivyCacheVolume,
+              Target: '/cache',
+              ReadOnly: true
+            }
+          ],
+          NetworkMode: 'none',
+          CapDrop: ['ALL'],
+          SecurityOpt: ['no-new-privileges'],
+          ReadonlyRootfs: true,
+          PidsLimit: 128,
+          Tmpfs: {
+            '/tmp': 'rw,noexec,nosuid,nodev,size=67108864',
+            '/home/scanner': 'rw,noexec,nosuid,nodev,size=1048576',
+            '/scan': 'rw,noexec,nosuid,nodev,size=1073741824,mode=1777',
+            '/scanner-cache': 'rw,noexec,nosuid,nodev,size=536870912,mode=1777'
+          }
         }
       })
-      await container.start()
+      await this.sendImageToScanner(container, imageName)
       const logsStream = await container.logs({
         follow: true,
         stdout: true,

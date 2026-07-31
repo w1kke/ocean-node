@@ -24,6 +24,8 @@ const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+const MINIMUM_DISCLOSURE_PARTICIPANTS = 20
+const MAX_PRIVATE_DATASET_BYTES = 16 * 1024 * 1024
 type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
   Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
@@ -32,6 +34,32 @@ export class PrivateDatasetError extends Error {
     super(code)
     this.name = 'PrivateDatasetError'
   }
+}
+
+export function isLocalProofHostname(hostname: string): boolean {
+  const parts = hostname.split('.')
+  const loopbackIpv4 =
+    parts.length === 4 &&
+    parts[0] === '127' &&
+    parts.every(
+      (part) =>
+        part.length > 0 &&
+        [...part].every((character) => character >= '0' && character <= '9') &&
+        Number(part) <= 255
+    )
+  const singleLabel =
+    !hostname.includes('.') &&
+    hostname.length > 0 &&
+    hostname.length <= 63 &&
+    !hostname.startsWith('-') &&
+    !hostname.endsWith('-') &&
+    [...hostname].every(
+      (character) =>
+        (character >= 'a' && character <= 'z') ||
+        (character >= '0' && character <= '9') ||
+        character === '-'
+    )
+  return hostname === 'localhost' || loopbackIpv4 || singleLabel
 }
 
 export function assertPrivateDatasetJob(
@@ -55,6 +83,13 @@ export function assertPrivateDatasetConfiguration(
   policy: PrivateTransportPolicy,
   environment: NodeJS.ProcessEnv = process.env
 ): void {
+  if (
+    !Number.isSafeInteger(policy.maxBytes) ||
+    policy.maxBytes < 1 ||
+    policy.maxBytes > MAX_PRIVATE_DATASET_BYTES
+  ) {
+    throw new PrivateDatasetError('private_dataset_size_limit_invalid')
+  }
   if (
     policy.analysisId === 'brainstem.resting-rr-cohort-summary/v1' &&
     policy.paperInsight !== undefined
@@ -96,9 +131,22 @@ export function assertPrivateDatasetConfiguration(
   ) {
     throw new PrivateDatasetError('private_dataset_credential_invalid')
   }
+  const url = new URL(policy.url)
+  if (
+    url.protocol !== 'https:' &&
+    !(
+      policy.allowInsecureLocalProof === true &&
+      url.protocol === 'http:' &&
+      isLocalProofHostname(url.hostname)
+    )
+  ) {
+    throw new PrivateDatasetError('private_dataset_transport_invalid')
+  }
+  if (!isLocalProofHostname(url.hostname) && !policy.tls) {
+    throw new PrivateDatasetError('private_dataset_transport_invalid')
+  }
   if (!policy.tls) return
 
-  const url = new URL(policy.url)
   if (
     url.protocol !== 'https:' ||
     url.hostname.toLowerCase() !== policy.tls.serverName.toLowerCase()
@@ -197,6 +245,7 @@ function validateReviewedCohortInput(
       Object.keys(dataset).sort().join(',') !== 'participants,schema' ||
       dataset.schema !== policy.paperInsight.inputSchema ||
       !Array.isArray(dataset.participants) ||
+      dataset.participants.length < MINIMUM_DISCLOSURE_PARTICIPANTS ||
       dataset.participants.length > 1000
     ) {
       throw new Error('invalid dataset')
@@ -293,6 +342,13 @@ export async function downloadVerifiedJson(
   headers: Record<string, string>,
   httpsAgent?: HttpsAgent
 ): Promise<{ bytes: number; checksum: string }> {
+  if (
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > MAX_PRIVATE_DATASET_BYTES
+  ) {
+    throw new PrivateDatasetError('private_dataset_size_limit_invalid')
+  }
   const partial = `${destination}.part`
   let responseStream: Readable | undefined
   try {

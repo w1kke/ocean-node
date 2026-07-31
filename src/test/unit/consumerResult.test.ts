@@ -191,6 +191,12 @@ describe('single JSON consumer result', () => {
         `sha256:${'b'.repeat(64)}`
       )
     ).to.throw('does not match execution')
+    expect(() =>
+      validateConsumerResultContract(Buffer.from(JSON.stringify(base)), {
+        ...policy,
+        maxBytes: 1
+      })
+    ).to.throw('size limit')
   })
 
   it('binds a reviewed cohort result to its immutable evidence policy', () => {

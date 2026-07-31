@@ -4,7 +4,7 @@ import sinon from 'sinon'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
-import { Readable } from 'stream'
+import { PassThrough, Readable } from 'stream'
 
 import {
   C2DStatusNumber,
@@ -90,6 +90,12 @@ function makeScannerContainer(output: string, statusCode = 0, stderr = false) {
       ) => logs.pipe(stderr ? error : stdout)
     }
   } as any
+}
+
+function allowScannerRun(engine: any) {
+  engine.checkscanDBImage = sinon.stub().resolves()
+  engine.ensureFreshScanDatabase = sinon.stub().resolves()
+  engine.sendImageToScanner = sinon.stub().resolves()
 }
 
 function makeJob(): DBComputeJob {
@@ -197,6 +203,33 @@ describe('fail-closed image scanning', () => {
     )
   })
 
+  it('streams the exported image over a hijacked scanner stdin', async () => {
+    const { engine } = await makeEngine({
+      tempFolder,
+      scanImages: true,
+      severities: ['HIGH']
+    })
+    const input = new PassThrough()
+    const chunks: Buffer[] = []
+    input.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
+    const scanner = {
+      attach: sinon.stub().resolves(input),
+      start: sinon.stub().resolves()
+    }
+    ;(engine as any).docker = {
+      getImage: () => ({ get: sinon.stub().resolves(Readable.from(['image'])) })
+    }
+
+    await (engine as any).sendImageToScanner(scanner, 'example/image')
+
+    expect(scanner.attach.firstCall.args[0]).to.include({
+      hijack: true,
+      stdin: true
+    })
+    expect(scanner.start.calledOnce).to.equal(true)
+    expect(Buffer.concat(chunks).toString()).to.equal('image')
+  })
+
   it('uses one severity list for Trivy and evaluation and removes the scanner', async () => {
     const { engine } = await makeEngine({
       tempFolder,
@@ -205,13 +238,34 @@ describe('fail-closed image scanning', () => {
     })
     const container = makeScannerContainer(JSON.stringify(findingsReport))
     const createContainer = sinon.stub().resolves(container)
-    ;(engine as any).checkscanDBImage = sinon.stub().resolves()
+    allowScannerRun(engine as any)
     ;(engine as any).docker = { createContainer }
 
     const result = await (engine as any).checkImageVulnerability('example/image')
 
     expect(result.vulnerable).to.equal(true)
-    expect(createContainer.firstCall.args[0].Cmd).to.include('HIGH,CRITICAL')
+    expect(createContainer.firstCall.args[0].Cmd[0]).to.include('HIGH,CRITICAL')
+    expect(createContainer.firstCall.args[0].Cmd[0]).to.include('/scan/image.tar')
+    expect(createContainer.firstCall.args[0].Cmd[0]).to.include(
+      '--cache-dir /scanner-cache'
+    )
+    expect(createContainer.firstCall.args[0].Cmd[0]).to.include(
+      'ln -s /cache/db /scanner-cache/db'
+    )
+    expect(createContainer.firstCall.args[0].Cmd[0]).not.to.include(
+      '--cache-backend memory'
+    )
+    expect(JSON.stringify(createContainer.firstCall.args[0].HostConfig)).not.to.include(
+      'docker.sock'
+    )
+    expect(createContainer.firstCall.args[0].HostConfig.Mounts[0]).to.deep.include({
+      Type: 'volume',
+      Target: '/cache',
+      ReadOnly: true
+    })
+    expect(createContainer.firstCall.args[0].HostConfig.NetworkMode).to.equal('none')
+    expect(createContainer.firstCall.args[0].HostConfig.ReadonlyRootfs).to.equal(true)
+    expect(createContainer.firstCall.args[0].HostConfig.CapDrop).to.deep.equal(['ALL'])
     expect(container.remove.calledOnce).to.equal(true)
   })
 
@@ -221,7 +275,7 @@ describe('fail-closed image scanning', () => {
       scanImages: true,
       severities: ['HIGH']
     })
-    ;(engine as any).checkscanDBImage = sinon.stub().resolves()
+    allowScannerRun(engine as any)
 
     for (const [output, status, expected] of [
       ['scanner failed', 2, 'exited with status 2'],
@@ -237,6 +291,59 @@ describe('fail-closed image scanning', () => {
       expect(message).to.include(expected)
       expect(container.remove.calledOnce).to.equal(true)
     }
+  })
+
+  it('refreshes a missing database before scanning and fails closed if refresh fails', async () => {
+    const { engine } = await makeEngine({
+      tempFolder,
+      scanImages: true,
+      severities: ['HIGH']
+    })
+    ;(engine as any).checkscanDBImage = sinon.stub().resolves()
+    ;(engine as any).scanDBUpdate = sinon.stub().callsFake(() => {
+      ;(engine as any).trivyDatabaseUpdatedAt = Date.now()
+      return Promise.resolve()
+    })
+    await (engine as any).ensureFreshScanDatabase()
+    expect((engine as any).scanDBUpdate.calledOnce).to.equal(true)
+    ;(engine as any).trivyDatabaseUpdatedAt = null
+    ;(engine as any).scanDBUpdate = sinon.stub().rejects(new Error('refresh failed'))
+    ;(engine as any).docker = { createContainer: sinon.stub() }
+    const message = await rejectedMessage(
+      (engine as any).checkImageVulnerability('example/image')
+    )
+    expect(message).to.include('refresh failed')
+    expect((engine as any).docker.createContainer.notCalled).to.equal(true)
+  })
+
+  it('marks the Docker-managed vulnerability database fresh only after update', async () => {
+    const { engine } = await makeEngine({
+      tempFolder,
+      scanImages: true,
+      severities: ['HIGH']
+    })
+    const updater = {
+      start: sinon.stub().resolves(),
+      wait: sinon.stub().resolves({ StatusCode: 0 }),
+      remove: sinon.stub().resolves()
+    }
+    const createVolume = sinon.stub().resolves()
+    const createContainer = sinon.stub().resolves(updater)
+    ;(engine as any).docker = {
+      getImage: () => ({ inspect: sinon.stub().resolves() }),
+      createVolume,
+      createContainer
+    }
+
+    await Promise.all([(engine as any).scanDBUpdate(), (engine as any).scanDBUpdate()])
+
+    expect(createVolume.calledOnce).to.equal(true)
+    expect(createContainer.firstCall.args[0].HostConfig.Mounts[0]).to.deep.include({
+      Type: 'volume',
+      Target: '/root/.cache/trivy'
+    })
+    expect((engine as any).trivyDatabaseUpdatedAt).to.be.a('number')
+    expect(() => (engine as any).assertFreshScanDatabase()).not.to.throw()
   })
 
   it('stops before volume creation when scanning fails or rejects the image', async () => {

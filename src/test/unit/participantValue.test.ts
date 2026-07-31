@@ -38,7 +38,8 @@ function policy(url: string): PrivateDatasetPolicy {
     approvedAlgorithmImage: `brainstem/private-rr@sha256:${'c'.repeat(64)}`,
     bearerTokenEnv: 'CRAB_C2D_TEST_TOKEN',
     releaseId: 'd'.repeat(64),
-    participantValue: { crabSignerAddress: CRAB.address }
+    participantValue: { crabSignerAddress: CRAB.address },
+    allowInsecureLocalProof: true
   }
 }
 

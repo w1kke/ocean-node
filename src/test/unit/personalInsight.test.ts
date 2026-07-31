@@ -17,6 +17,7 @@ import os from 'os'
 import path from 'path'
 import type { DBComputeJob, PersonalInsightPolicy } from '../../@types/C2D/C2D.js'
 import {
+  assertPersonalInsightConfiguration,
   claimPersonalInsightGrant,
   completePersonalInsightRun,
   consumePersonalInsightCapability,
@@ -63,6 +64,14 @@ function policy(crabUrl: string): PersonalInsightPolicy {
     algorithmVersion: '1.0.0',
     crabUrl,
     allowInsecureLocalProof: crabUrl.startsWith('http://'),
+    tls: crabUrl.startsWith('https://')
+      ? {
+          caFile: '/run/brainstem-secrets/crab-ca.pem',
+          clientCertificateFile: '/run/brainstem-secrets/ocean-node.pem',
+          clientKeyFile: '/run/brainstem-secrets/ocean-node-key.pem',
+          serverName: new URL(crabUrl).hostname
+        }
+      : undefined,
     approvedAlgorithmImage: IMAGE,
     candidateManifestSha256: null,
     approvedManifestSha256: null,
@@ -929,7 +938,8 @@ describe('personal Insight boundary', () => {
         personalInsight: {
           ...personalInsight,
           crabUrl: 'http://crab-personal:8089/',
-          allowInsecureLocalProof: false
+          allowInsecureLocalProof: false,
+          tls: undefined
         }
       }).success
     ).to.equal(false)
@@ -939,7 +949,8 @@ describe('personal Insight boundary', () => {
         personalInsight: {
           ...personalInsight,
           crabUrl: 'http://crab-personal:8089/',
-          allowInsecureLocalProof: true
+          allowInsecureLocalProof: true,
+          tls: undefined
         }
       }).success
     ).to.equal(true)
@@ -949,7 +960,8 @@ describe('personal Insight boundary', () => {
         personalInsight: {
           ...personalInsight,
           crabUrl: 'http://crab.example.com/',
-          allowInsecureLocalProof: true
+          allowInsecureLocalProof: true,
+          tls: undefined
         }
       }).success
     ).to.equal(false)
@@ -1032,6 +1044,21 @@ describe('personal Insight boundary', () => {
     expect(
       updates.some((updated) => updated.personalInsightState === 'rejected')
     ).to.equal(true)
+  })
+
+  it('rejects non-canonical RAM workspace roots before touching the filesystem', () => {
+    for (const ramWorkspaceRoot of [
+      '/dev/shm/../etc',
+      '/dev/shm/brainstem/../escape',
+      '/dev/shm/brainstem.personal'
+    ]) {
+      expect(() =>
+        assertPersonalInsightConfiguration(
+          { ...policy(crabUrl), ramWorkspaceRoot },
+          environment
+        )
+      ).to.throw(PersonalInsightError, 'personal_insight_ram_workspace_invalid')
+    }
   })
 
   it('exposes only exact grant and capability bodies with safe errors', async () => {

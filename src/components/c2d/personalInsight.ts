@@ -1,11 +1,13 @@
 /* eslint-disable security/detect-non-literal-fs-filename */
 import axios from 'axios'
 import { chmodSync, lstatSync, mkdirSync, rmSync } from 'fs'
+import path from 'path'
 import { z } from 'zod'
 import type { PersonalInsightPolicy } from '../../@types/C2D/C2D.js'
 import {
   assertPrivateDatasetConfiguration,
   downloadVerifiedJson,
+  isLocalProofHostname,
   privateDatasetHttpsAgent
 } from './privateDataset.js'
 import {
@@ -80,32 +82,6 @@ function validTimestamp(value: unknown): boolean {
   return RFC3339_TIMESTAMP.safeParse(value).success
 }
 
-function isLocalProofHostname(hostname: string): boolean {
-  const parts = hostname.split('.')
-  const loopbackIpv4 =
-    parts.length === 4 &&
-    parts[0] === '127' &&
-    parts.every(
-      (part) =>
-        part.length > 0 &&
-        [...part].every((character) => character >= '0' && character <= '9') &&
-        Number(part) <= 255
-    )
-  const singleLabel =
-    !hostname.includes('.') &&
-    hostname.length > 0 &&
-    hostname.length <= 63 &&
-    !hostname.startsWith('-') &&
-    !hostname.endsWith('-') &&
-    [...hostname].every(
-      (character) =>
-        (character >= 'a' && character <= 'z') ||
-        (character >= '0' && character <= '9') ||
-        character === '-'
-    )
-  return hostname === 'localhost' || loopbackIpv4 || singleLabel
-}
-
 function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
   if (
     policy.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
@@ -165,8 +141,21 @@ function privateTransportPolicy(policy: PersonalInsightPolicy) {
     approvedAlgorithmImage: policy.approvedAlgorithmImage,
     bearerTokenEnv: policy.bearerTokenEnv,
     releaseId: '0'.repeat(64),
+    allowInsecureLocalProof: policy.allowInsecureLocalProof,
     tls: policy.tls
   }
+}
+
+function ramWorkspaceRoot(policy: PersonalInsightPolicy): string {
+  const resolved = path.resolve(policy.ramWorkspaceRoot)
+  if (
+    resolved !== policy.ramWorkspaceRoot ||
+    path.dirname(resolved) !== '/dev/shm' ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(path.basename(resolved))
+  ) {
+    throw new PersonalInsightError('personal_insight_ram_workspace_invalid')
+  }
+  return resolved
 }
 
 export function assertPersonalInsightConfiguration(
@@ -190,9 +179,7 @@ export function assertPersonalInsightConfiguration(
   if (policy.tls && url.protocol !== 'https:') {
     throw new PersonalInsightError('personal_insight_crab_transport_invalid')
   }
-  if (!policy.ramWorkspaceRoot.startsWith('/dev/shm/')) {
-    throw new PersonalInsightError('personal_insight_ram_workspace_invalid')
-  }
+  ramWorkspaceRoot(policy)
   if (policy.bffBearerTokenEnv === policy.bearerTokenEnv) {
     throw new PersonalInsightError('personal_insight_bff_credential_invalid')
   }
@@ -758,11 +745,12 @@ export function prepareRamWorkspace(
   jobId: string
 ): string {
   if (!JOB_ID.test(jobId)) throw new PersonalInsightError('personal_insight_job_invalid')
-  const root = lstatSync(policy.ramWorkspaceRoot)
+  const rootPath = ramWorkspaceRoot(policy)
+  const root = lstatSync(rootPath)
   if (root.isSymbolicLink() || !root.isDirectory()) {
     throw new PersonalInsightError('personal_insight_ram_workspace_invalid')
   }
-  const workspace = `${policy.ramWorkspaceRoot}/${jobId}`
+  const workspace = path.join(rootPath, jobId)
   rmSync(workspace, { recursive: true, force: true })
   mkdirSync(workspace, { recursive: true, mode: 0o700 })
   return workspace
@@ -770,13 +758,14 @@ export function prepareRamWorkspace(
 
 export function resetRamWorkspaceRoot(policy: PersonalInsightPolicy): void {
   assertPersonalInsightConfiguration(policy)
-  rmSync(policy.ramWorkspaceRoot, { recursive: true, force: true })
-  mkdirSync(policy.ramWorkspaceRoot, { recursive: true, mode: 0o700 })
-  chmodSync(policy.ramWorkspaceRoot, 0o700)
+  const root = ramWorkspaceRoot(policy)
+  rmSync(root, { recursive: true, force: true })
+  mkdirSync(root, { recursive: false, mode: 0o700 })
+  chmodSync(root, 0o700)
 }
 
 export function purgeRamWorkspace(policy: PersonalInsightPolicy, jobId: string): void {
   if (JOB_ID.test(jobId)) {
-    rmSync(`${policy.ramWorkspaceRoot}/${jobId}`, { recursive: true, force: true })
+    rmSync(path.join(ramWorkspaceRoot(policy), jobId), { recursive: true, force: true })
   }
 }

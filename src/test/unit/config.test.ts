@@ -129,6 +129,7 @@ describe('Should require an explicit consumer result policy', () => {
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
       bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
       releaseId: 'b'.repeat(64),
+      allowInsecureLocalProof: true,
       participantValue: {
         crabSignerAddress: '0x1111111111111111111111111111111111111111'
       }
@@ -269,7 +270,8 @@ describe('Should require an explicit consumer result policy', () => {
       maxBytes: 16 * 1024 * 1024,
       approvedAlgorithmImage: `brainstem/private-rr@sha256:${'a'.repeat(64)}`,
       bearerTokenEnv: 'CRAB_C2D_BEARER_TOKEN',
-      releaseId: 'b'.repeat(64)
+      releaseId: 'b'.repeat(64),
+      allowInsecureLocalProof: true
     }
     expect(
       C2DEnvironmentConfigSchema.safeParse({

@@ -85,7 +85,8 @@ describe('Private dataset provisioning', () => {
       maxBytes: 1024,
       approvedAlgorithmImage: IMAGE,
       bearerTokenEnv: 'CRAB_C2D_TEST_TOKEN',
-      releaseId: 'c'.repeat(64)
+      releaseId: 'c'.repeat(64),
+      allowInsecureLocalProof: true
     }
     environment = { CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough' }
     file = {
@@ -190,6 +191,16 @@ describe('Private dataset provisioning', () => {
     expect(requestCount).to.equal(1)
   })
 
+  it('rejects a missing or unsafe size limit before fetching', async () => {
+    policy.maxBytes = 0
+    await expectFailure('private_dataset_size_limit_invalid')
+    expect(requestCount).to.equal(0)
+    expect(() => assertPrivateDatasetConfiguration(policy, environment)).to.throw(
+      PrivateDatasetError,
+      'private_dataset_size_limit_invalid'
+    )
+  })
+
   it('rejects redirects, non-success responses, and wrong media types safely', async () => {
     responseMode = 'redirect'
     await expectFailure('private_dataset_fetch_failed')
@@ -241,27 +252,34 @@ describe('Private dataset provisioning', () => {
       }
     }
     const intervals = Array.from({ length: 330 }, (_, index) => 900 + (index % 7))
+    const participants = Array.from({ length: 20 }, (_, index) => ({
+      subjectId: (index + 1).toString(16).padStart(64, '0'),
+      recordings: [
+        {
+          recordingType: 'rest',
+          durationSeconds: 300,
+          rrIntervalsMs: intervals
+        }
+      ]
+    }))
     body = Buffer.from(
       JSON.stringify({
         schema: 'brainstem.resting-hrv-methods-cohort/v1',
-        participants: [
-          {
-            subjectId: '1'.repeat(64),
-            recordings: [
-              {
-                recordingType: 'rest',
-                durationSeconds: 300,
-                rrIntervalsMs: intervals
-              }
-            ]
-          }
-        ]
+        participants
       })
     )
 
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
     expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-methods/v1')
     rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-hrv-methods-cohort/v1',
+        participants: participants.slice(0, 19)
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
 
     body = Buffer.from(
       JSON.stringify({
@@ -291,21 +309,20 @@ describe('Private dataset provisioning', () => {
       }
     }
     const intervals = Array.from({ length: 300 }, (_, index) => 990 + (index % 11))
+    const participants = Array.from({ length: 20 }, (_, index) => ({
+      subjectId: (index + 1).toString(16).padStart(64, '0'),
+      recordings: [
+        {
+          recordingType: 'rest',
+          durationSeconds: 300,
+          rrIntervalsMs: intervals
+        }
+      ]
+    }))
     body = Buffer.from(
       JSON.stringify({
         schema: 'brainstem.resting-sample-entropy-cohort/v1',
-        participants: [
-          {
-            subjectId: '1'.repeat(64),
-            recordings: [
-              {
-                recordingType: 'rest',
-                durationSeconds: 300,
-                rrIntervalsMs: intervals
-              }
-            ]
-          }
-        ]
+        participants
       })
     )
 
@@ -336,6 +353,33 @@ describe('Private dataset provisioning', () => {
       })
     )
     await expectFailure('private_dataset_contract_invalid')
+  })
+
+  it('rejects remote plaintext and remote HTTPS without mTLS', () => {
+    expect(() =>
+      assertPrivateDatasetConfiguration(
+        {
+          ...policy,
+          url: 'http://crab.example.com/api/v1/internal/c2d/rr-cohort'
+        },
+        environment
+      )
+    ).to.throw(PrivateDatasetError, 'private_dataset_transport_invalid')
+    expect(() =>
+      assertPrivateDatasetConfiguration(
+        { ...policy, allowInsecureLocalProof: false },
+        environment
+      )
+    ).to.throw(PrivateDatasetError, 'private_dataset_transport_invalid')
+    expect(() =>
+      assertPrivateDatasetConfiguration(
+        {
+          ...policy,
+          url: 'https://crab.example.com/api/v1/internal/c2d/rr-cohort'
+        },
+        environment
+      )
+    ).to.throw(PrivateDatasetError, 'private_dataset_transport_invalid')
   })
 
   it('fails closed on unsafe mTLS identity and key material', () => {

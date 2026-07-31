@@ -269,6 +269,13 @@ export function validateConsumerResultContract(
   expectedAlgorithmImageDigest?: string
 ): DBComputeResultValidation | undefined {
   if (policy.mode !== 'singleJson' || !policy.resultContract) return undefined
+  if (
+    !Number.isSafeInteger(policy.maxBytes) ||
+    policy.maxBytes < 1 ||
+    bytes.length > policy.maxBytes
+  ) {
+    throw new Error('result.json exceeds the configured size limit')
+  }
 
   let value: unknown
   try {

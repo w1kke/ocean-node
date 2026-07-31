@@ -336,6 +336,7 @@ export const C2DEnvironmentConfigSchema = z
           })
           .strict()
           .optional(),
+        allowInsecureLocalProof: z.boolean().optional().default(false),
         tls: z
           .object({
             caFile: z
@@ -377,6 +378,22 @@ export const C2DEnvironmentConfigSchema = z
         },
         {
           message: 'The reviewed paper policy must match the named cohort analysis'
+        }
+      )
+      .refine(
+        (policy) => {
+          const url = new URL(policy.url)
+          return (
+            (url.protocol === 'https:' &&
+              (isLocalProofHostname(url.hostname) || policy.tls !== undefined)) ||
+            (policy.allowInsecureLocalProof === true &&
+              url.protocol === 'http:' &&
+              isLocalProofHostname(url.hostname))
+          )
+        },
+        {
+          message:
+            'Private dataset URL requires HTTPS unless the explicit local-proof flag is set'
         }
       )
       .optional(),
@@ -423,7 +440,7 @@ export const C2DEnvironmentConfigSchema = z
         bffBearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
         ramWorkspaceRoot: z
           .string()
-          .regex(/^\/dev\/shm\/[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/),
+          .regex(/^\/dev\/shm\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/),
         inputSchema: z.enum([
           'brainstem.personal-resting-rr/v1',
           'brainstem.personal-resting-hrv-methods/v1',
@@ -551,6 +568,13 @@ export const C2DEnvironmentConfigSchema = z
             code: z.ZodIssueCode.custom,
             path: ['tls'],
             message: 'Personal Insight mTLS requires HTTPS'
+          })
+        }
+        if (!isLocalProofHostname(url.hostname) && !policy.tls) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['tls'],
+            message: 'Non-local Personal Insight transport requires mTLS'
           })
         }
       })

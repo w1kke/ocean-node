@@ -142,6 +142,7 @@ export interface PrivateDatasetPolicy {
   participantValue?: {
     crabSignerAddress: string
   }
+  allowInsecureLocalProof?: boolean
   tls?: {
     caFile: string
     clientCertificateFile: string
