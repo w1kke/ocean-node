@@ -317,6 +317,28 @@ describe('private aggregate result retention', () => {
     })
   })
 
+  it('keeps only Insight routing metadata when execution fails before validation', () => {
+    const job = makeJob(Math.floor(Date.now() / 1000))
+    const insightId = `did:ope:${'e'.repeat(64)}`
+    job.metadata = {
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      analysisFamily: 'brainstem.resting-hrv-methods',
+      scope: 'cohort',
+      algorithmVersion: 'caller-value-must-not-survive',
+      algorithmImageDigest: `sha256:${'f'.repeat(64)}`,
+      resultSchema: 'brainstem.insight-result/v1'
+    }
+    delete job.resultValidation
+    const engine = makeEngine(tempFolder, {} as any)
+    ;(engine as any).sanitizePrivateJob(job)
+
+    expect(job.metadata).to.deep.equal({
+      purpose: 'brainstem-insights-local-proof',
+      insightId,
+      resultSchema: 'brainstem.insight-result/v1'
+    })
+  })
   it('withholds a value-enabled result until the verified commitment is persisted', async () => {
     const finishedAt = Math.floor(Date.now() / 1000)
     const job = makeJob(finishedAt)

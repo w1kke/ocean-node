@@ -342,6 +342,9 @@ describe('fail-closed image scanning', () => {
       Type: 'volume',
       Target: '/root/.cache/trivy'
     })
+    expect(createContainer.firstCall.args[0].HostConfig.Tmpfs['/tmp']).to.equal(
+      'rw,noexec,nosuid,nodev,size=536870912'
+    )
     expect((engine as any).trivyDatabaseUpdatedAt).to.be.a('number')
     expect(() => (engine as any).assertFreshScanDatabase()).not.to.throw()
   })
