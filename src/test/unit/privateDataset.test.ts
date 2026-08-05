@@ -35,6 +35,9 @@ describe('Private dataset provisioning', () => {
   let receivedAuthorization: string
   let receivedReleaseId: string
   let receivedAnalysisId: string
+  let receivedStudyProposalId: string
+  let receivedStudyRevisionId: string
+  let receivedStudyRevisionSha256: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
@@ -47,6 +50,9 @@ describe('Private dataset provisioning', () => {
     receivedAuthorization = ''
     receivedReleaseId = ''
     receivedAnalysisId = ''
+    receivedStudyProposalId = ''
+    receivedStudyRevisionId = ''
+    receivedStudyRevisionSha256 = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
@@ -55,6 +61,15 @@ describe('Private dataset provisioning', () => {
       receivedAuthorization = String(request.headers.authorization ?? '')
       receivedReleaseId = String(request.headers['x-brainstem-cohort-release-id'] ?? '')
       receivedAnalysisId = String(request.headers['x-brainstem-analysis-id'] ?? '')
+      receivedStudyProposalId = String(
+        request.headers['x-brainstem-study-proposal-id'] ?? ''
+      )
+      receivedStudyRevisionId = String(
+        request.headers['x-brainstem-study-revision-id'] ?? ''
+      )
+      receivedStudyRevisionSha256 = String(
+        request.headers['x-brainstem-study-revision-sha256'] ?? ''
+      )
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
         response.end()
@@ -68,7 +83,10 @@ describe('Private dataset provisioning', () => {
       const checksum = createHash('sha256').update(body).digest('hex')
       const headers: Record<string, string | number> = {
         'Content-Type': responseMode === 'wrong-type' ? 'text/plain' : 'application/json',
-        'X-Content-SHA256': responseMode === 'bad-checksum' ? '0'.repeat(64) : checksum
+        'X-Content-SHA256': responseMode === 'bad-checksum' ? '0'.repeat(64) : checksum,
+        ...(responseMode === 'no-snapshot'
+          ? {}
+          : { 'X-Brainstem-Source-Snapshot-SHA256': 'e'.repeat(64) })
       }
       if (responseMode !== 'no-length') headers['Content-Length'] = body.length
       response.writeHead(200, headers)
@@ -88,7 +106,10 @@ describe('Private dataset provisioning', () => {
       releaseId: 'c'.repeat(64),
       allowInsecureLocalProof: true
     }
-    environment = { CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough' }
+    environment = {
+      CRAB_C2D_TEST_TOKEN: 'generated-test-token-that-is-long-enough',
+      STUDY_RESULT_TEST_TOKEN: 'generated-result-token-that-is-long-enough'
+    }
     file = {
       type: 'url',
       url,
@@ -160,6 +181,103 @@ describe('Private dataset provisioning', () => {
     }
     await expectFailure('private_dataset_analysis_header_is_reserved')
     expect(requestCount).to.equal(0)
+  })
+
+  it('binds a reviewed full-night study revision and validates its cohort', async () => {
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.full-night-rr-signal-compatibility/v1',
+      maxBytes: 16 * 1024 * 1024,
+      study: {
+        proposalId: 'study_a',
+        revisionId: 'revision_b',
+        revisionSha256: 'd'.repeat(64),
+        resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.full-night-rr-cohort/v1',
+        policy: 'brainstem.full-night-rr-signal-compatibility/v1',
+        participants: Array.from({ length: 20 }, (_, index) => ({
+          subjectId: (index + 1).toString(16).padStart(64, '0'),
+          recordings: [
+            {
+              recordingType: 'sleep',
+              durationSeconds: 18000,
+              intervalSemantics: 'detector_rr_unclassified',
+              allowedUse: 'aggregate_method_compatibility_only',
+              quality: {
+                observedIntervalCount: 9000,
+                acceptedIntervalCount: 9000,
+                acceptedFraction: 1,
+                durationCoverageRatio: 1,
+                normalToNormalProvenance: 'unverified',
+                officialMethodInputCompatible: false
+              },
+              rrIntervalsMs: Array(9000).fill(2000)
+            }
+          ]
+        }))
+      })
+    )
+
+    const downloaded = await downloadPrivateDataset(
+      file,
+      destination,
+      JOB_ID,
+      policy,
+      environment
+    )
+
+    expect(receivedStudyProposalId).to.equal('study_a')
+    expect(receivedStudyRevisionId).to.equal('revision_b')
+    expect(receivedStudyRevisionSha256).to.equal('d'.repeat(64))
+    expect(downloaded.sourceSnapshotSha256).to.equal('e'.repeat(64))
+
+    const fractionalDuration = JSON.parse(body.toString())
+    for (const participant of fractionalDuration.participants) {
+      participant.recordings[0].quality.durationCoverageRatio = Number(
+        (18000 / 18000.5).toFixed(6)
+      )
+    }
+    body = Buffer.from(JSON.stringify(fractionalDuration))
+    await downloadPrivateDataset(
+      file,
+      `${destination}.fractional`,
+      JOB_ID,
+      policy,
+      environment
+    )
+
+    fractionalDuration.participants = Array.from({ length: 101 }, (_, index) => ({
+      ...fractionalDuration.participants[0],
+      subjectId: (index + 1).toString(16).padStart(64, '0')
+    }))
+    body = Buffer.from(JSON.stringify(fractionalDuration))
+    rmSync(destination)
+    await expectFailure('private_dataset_contract_invalid')
+  })
+
+  it('rejects caller control of study binding headers before fetching', async () => {
+    file.headers = { 'X-Brainstem-Study-Proposal-Id': 'study_a' }
+    await expectFailure('private_dataset_study_header_is_reserved')
+    expect(requestCount).to.equal(0)
+  })
+
+  it('requires a source snapshot for reviewed study inputs', async () => {
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.full-night-rr-signal-compatibility/v1',
+      study: {
+        proposalId: 'study_a',
+        revisionId: 'revision_b',
+        revisionSha256: 'd'.repeat(64),
+        resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
+      }
+    }
+    responseMode = 'no-snapshot'
+    await expectFailure('private_dataset_source_snapshot_invalid')
   })
 
   it('rejects all caller-supplied headers and missing service credentials', async () => {
@@ -251,6 +369,20 @@ describe('Private dataset provisioning', () => {
         clinicalUse: 'prohibited'
       }
     }
+    expect(() =>
+      assertPrivateDatasetConfiguration(
+        {
+          ...policy,
+          study: {
+            proposalId: 'study_a',
+            revisionId: 'revision_b',
+            revisionSha256: 'd'.repeat(64),
+            resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
+          }
+        },
+        environment
+      )
+    ).to.throw(PrivateDatasetError, 'private_dataset_policy_invalid')
     const intervals = Array.from({ length: 330 }, (_, index) => 900 + (index % 7))
     const participants = Array.from({ length: 20 }, (_, index) => ({
       subjectId: (index + 1).toString(16).padStart(64, '0'),

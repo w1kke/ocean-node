@@ -20,6 +20,9 @@ const SHA256 = /^[0-9a-f]{64}$/
 const JOB_HEADER = 'x-ocean-compute-job-id'
 const RELEASE_HEADER = 'x-brainstem-cohort-release-id'
 const ANALYSIS_HEADER = 'x-brainstem-analysis-id'
+const STUDY_PROPOSAL_HEADER = 'x-brainstem-study-proposal-id'
+const STUDY_REVISION_HEADER = 'x-brainstem-study-revision-id'
+const STUDY_REVISION_SHA256_HEADER = 'x-brainstem-study-revision-sha256'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
@@ -92,13 +95,14 @@ export function assertPrivateDatasetConfiguration(
   }
   if (
     policy.analysisId === 'brainstem.resting-rr-cohort-summary/v1' &&
-    policy.paperInsight !== undefined
+    (policy.paperInsight !== undefined || policy.study !== undefined)
   ) {
     throw new PrivateDatasetError('private_dataset_policy_invalid')
   }
   if (
     policy.analysisId === 'brainstem.resting-hrv-methods/v1' &&
-    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+    (policy.study !== undefined ||
+      policy.paperInsight?.algorithmVersion !== '0.1.0' ||
       policy.paperInsight.inputSchema !== 'brainstem.resting-hrv-methods-cohort/v1' ||
       policy.paperInsight.candidateManifestSha256 !== METHODS_CANDIDATE_SHA256 ||
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
@@ -111,7 +115,8 @@ export function assertPrivateDatasetConfiguration(
   }
   if (
     policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1' &&
-    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+    (policy.study !== undefined ||
+      policy.paperInsight?.algorithmVersion !== '0.1.0' ||
       policy.paperInsight.inputSchema !== 'brainstem.resting-sample-entropy-cohort/v1' ||
       policy.paperInsight.candidateManifestSha256 !== SAMPLE_ENTROPY_CANDIDATE_SHA256 ||
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
@@ -119,6 +124,19 @@ export function assertPrivateDatasetConfiguration(
       policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
       policy.paperInsight.useClass !== 'methods_only' ||
       policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.full-night-rr-signal-compatibility/v1' &&
+    (!policy.study ||
+      !/^study_[0-9a-f]{1,64}$/.test(policy.study.proposalId) ||
+      !/^revision_[0-9a-f]{1,64}$/.test(policy.study.revisionId) ||
+      !SHA256.test(policy.study.revisionSha256) ||
+      !/^[A-Z][A-Z0-9_]{0,63}$/.test(policy.study.resultBearerTokenEnv) ||
+      policy.study.resultBearerTokenEnv === policy.bearerTokenEnv ||
+      policy.paperInsight !== undefined ||
+      policy.participantValue !== undefined)
   ) {
     throw new PrivateDatasetError('private_dataset_policy_invalid')
   }
@@ -130,6 +148,18 @@ export function assertPrivateDatasetConfiguration(
     bearerToken.includes('\r')
   ) {
     throw new PrivateDatasetError('private_dataset_credential_invalid')
+  }
+  if (policy.study) {
+    const resultToken = environment[policy.study.resultBearerTokenEnv]
+    if (
+      typeof resultToken !== 'string' ||
+      resultToken.length < 32 ||
+      resultToken.includes('\n') ||
+      resultToken.includes('\r') ||
+      resultToken === bearerToken
+    ) {
+      throw new PrivateDatasetError('private_dataset_credential_invalid')
+    }
   }
   const url = new URL(policy.url)
   if (
@@ -208,6 +238,15 @@ function requestHeaders(
     if (key.toLowerCase() === ANALYSIS_HEADER) {
       throw new PrivateDatasetError('private_dataset_analysis_header_is_reserved')
     }
+    if (
+      [
+        STUDY_PROPOSAL_HEADER,
+        STUDY_REVISION_HEADER,
+        STUDY_REVISION_SHA256_HEADER
+      ].includes(key.toLowerCase())
+    ) {
+      throw new PrivateDatasetError('private_dataset_study_header_is_reserved')
+    }
   }
   if (suppliedHeaders.length > 0) {
     throw new PrivateDatasetError('private_dataset_headers_not_allowed')
@@ -219,7 +258,14 @@ function requestHeaders(
     Authorization: `Bearer ${environment[policy.bearerTokenEnv]}`,
     'X-Ocean-Compute-Job-Id': jobId,
     'X-Brainstem-Cohort-Release-Id': policy.releaseId,
-    'X-Brainstem-Analysis-Id': policy.analysisId
+    'X-Brainstem-Analysis-Id': policy.analysisId,
+    ...(policy.study
+      ? {
+          'X-Brainstem-Study-Proposal-Id': policy.study.proposalId,
+          'X-Brainstem-Study-Revision-Id': policy.study.revisionId,
+          'X-Brainstem-Study-Revision-SHA256': policy.study.revisionSha256
+        }
+      : {})
   }
 }
 
@@ -234,11 +280,97 @@ function validateReviewedCohortInput(
   destination: string,
   policy: PrivateDatasetPolicy
 ): void {
-  if (!policy.paperInsight) return
+  if (!policy.paperInsight && !policy.study) return
   try {
     const dataset = JSON.parse(
       new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(destination))
     )
+    if (policy.study) {
+      if (
+        !dataset ||
+        Array.isArray(dataset) ||
+        Object.keys(dataset).sort().join(',') !== 'participants,policy,schema' ||
+        dataset.schema !== 'brainstem.full-night-rr-cohort/v1' ||
+        dataset.policy !== 'brainstem.full-night-rr-signal-compatibility/v1' ||
+        !Array.isArray(dataset.participants) ||
+        dataset.participants.length < MINIMUM_DISCLOSURE_PARTICIPANTS ||
+        dataset.participants.length > 100
+      ) {
+        throw new Error('invalid dataset')
+      }
+      const subjects = new Set<string>()
+      for (const participant of dataset.participants) {
+        const recording = participant?.recordings?.[0]
+        const quality = recording?.quality
+        if (
+          !participant ||
+          Array.isArray(participant) ||
+          Object.keys(participant).sort().join(',') !== 'recordings,subjectId' ||
+          typeof participant.subjectId !== 'string' ||
+          !SHA256.test(participant.subjectId) ||
+          subjects.has(participant.subjectId) ||
+          !Array.isArray(participant.recordings) ||
+          participant.recordings.length !== 1 ||
+          !recording ||
+          Array.isArray(recording) ||
+          Object.keys(recording).sort().join(',') !==
+            'allowedUse,durationSeconds,intervalSemantics,quality,recordingType,rrIntervalsMs' ||
+          recording.recordingType !== 'sleep' ||
+          recording.intervalSemantics !== 'detector_rr_unclassified' ||
+          recording.allowedUse !== 'aggregate_method_compatibility_only' ||
+          !Number.isInteger(recording.durationSeconds) ||
+          recording.durationSeconds < 18000 ||
+          recording.durationSeconds > 43200 ||
+          !Array.isArray(recording.rrIntervalsMs) ||
+          recording.rrIntervalsMs.length < 9000 ||
+          recording.rrIntervalsMs.length > 172800 ||
+          recording.rrIntervalsMs.some(
+            (value: unknown) =>
+              typeof value !== 'number' ||
+              !Number.isFinite(value) ||
+              value < 250 ||
+              value > 2000
+          ) ||
+          !quality ||
+          Array.isArray(quality) ||
+          Object.keys(quality).sort().join(',') !==
+            'acceptedFraction,acceptedIntervalCount,durationCoverageRatio,normalToNormalProvenance,observedIntervalCount,officialMethodInputCompatible' ||
+          quality.normalToNormalProvenance !== 'unverified' ||
+          quality.officialMethodInputCompatible !== false ||
+          !Number.isInteger(quality.observedIntervalCount) ||
+          quality.observedIntervalCount < recording.rrIntervalsMs.length ||
+          quality.acceptedIntervalCount !== recording.rrIntervalsMs.length ||
+          typeof quality.acceptedFraction !== 'number' ||
+          !Number.isFinite(quality.acceptedFraction) ||
+          quality.acceptedFraction < 0.95 ||
+          Math.abs(
+            quality.acceptedFraction -
+              quality.acceptedIntervalCount / quality.observedIntervalCount
+          ) > 0.000001 ||
+          typeof quality.durationCoverageRatio !== 'number' ||
+          !Number.isFinite(quality.durationCoverageRatio) ||
+          quality.durationCoverageRatio < 0.9 ||
+          quality.durationCoverageRatio > 1.1
+        ) {
+          throw new Error('invalid participant')
+        }
+        const intervalSeconds =
+          recording.rrIntervalsMs.reduce(
+            (total: number, value: number) => total + value,
+            0
+          ) / 1000
+        if (
+          quality.durationCoverageRatio <
+            intervalSeconds / (recording.durationSeconds + 1) - 0.0000005 ||
+          quality.durationCoverageRatio >
+            intervalSeconds / recording.durationSeconds + 0.0000005
+        ) {
+          throw new Error('invalid participant')
+        }
+        subjects.add(participant.subjectId)
+      }
+      return
+    }
     if (
       !dataset ||
       Array.isArray(dataset) ||
@@ -313,7 +445,7 @@ export async function downloadPrivateDataset(
   jobId: string,
   policy: PrivateDatasetPolicy,
   environment: NodeJS.ProcessEnv = process.env
-): Promise<{ bytes: number; checksum: string }> {
+): Promise<{ bytes: number; checksum: string; sourceSnapshotSha256?: string }> {
   if (!JOB_ID.test(jobId)) {
     throw new PrivateDatasetError('private_dataset_job_id_invalid')
   }
@@ -331,6 +463,10 @@ export async function downloadPrivateDataset(
     requestHeaders(file, jobId, policy, environment),
     privateDatasetHttpsAgent(policy)
   )
+  if (policy.study && !result.sourceSnapshotSha256) {
+    rmSync(destination, { force: true })
+    throw new PrivateDatasetError('private_dataset_source_snapshot_invalid')
+  }
   validateReviewedCohortInput(destination, policy)
   return result
 }
@@ -341,7 +477,7 @@ export async function downloadVerifiedJson(
   maxBytes: number,
   headers: Record<string, string>,
   httpsAgent?: HttpsAgent
-): Promise<{ bytes: number; checksum: string }> {
+): Promise<{ bytes: number; checksum: string; sourceSnapshotSha256?: string }> {
   if (
     !Number.isSafeInteger(maxBytes) ||
     maxBytes < 1 ||
@@ -394,6 +530,15 @@ export async function downloadVerifiedJson(
       SHA256,
       'private_dataset_checksum_invalid'
     )
+    const sourceSnapshotHeader = response.headers['x-brainstem-source-snapshot-sha256']
+    const sourceSnapshotSha256 =
+      sourceSnapshotHeader === undefined
+        ? undefined
+        : requiredHeader(
+            sourceSnapshotHeader,
+            SHA256,
+            'private_dataset_source_snapshot_invalid'
+          )
 
     let bytes = 0
     const hash = createHash('sha256')
@@ -424,7 +569,7 @@ export async function downloadVerifiedJson(
       throw new PrivateDatasetError('private_dataset_checksum_mismatch')
     }
     renameSync(partial, destination)
-    return { bytes, checksum }
+    return { bytes, checksum, sourceSnapshotSha256 }
   } catch (error) {
     responseStream?.destroy()
     rmSync(partial, { force: true })

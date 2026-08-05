@@ -295,7 +295,8 @@ export const C2DEnvironmentConfigSchema = z
         analysisId: z.enum([
           'brainstem.resting-rr-cohort-summary/v1',
           'brainstem.resting-hrv-methods/v1',
-          'brainstem.resting-rr-sample-entropy/v1'
+          'brainstem.resting-rr-sample-entropy/v1',
+          'brainstem.full-night-rr-signal-compatibility/v1'
         ]),
         url: z
           .string()
@@ -314,6 +315,15 @@ export const C2DEnvironmentConfigSchema = z
           .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]*@sha256:[0-9a-f]{64}$/),
         bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
         releaseId: z.string().regex(/^[0-9a-f]{64}$/),
+        study: z
+          .object({
+            proposalId: z.string().regex(/^study_[0-9a-f]{1,64}$/),
+            revisionId: z.string().regex(/^revision_[0-9a-f]{1,64}$/),
+            revisionSha256: z.string().regex(/^[0-9a-f]{64}$/),
+            resultBearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
+          })
+          .strict()
+          .optional(),
         paperInsight: z
           .object({
             algorithmVersion: z.literal('0.1.0'),
@@ -362,6 +372,7 @@ export const C2DEnvironmentConfigSchema = z
                 'brainstem.resting-hrv-methods-cohort/v1' &&
               policy.paperInsight.candidateManifestSha256 ===
                 '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1' &&
+              policy.study === undefined &&
               policy.participantValue === undefined
             )
           }
@@ -371,10 +382,19 @@ export const C2DEnvironmentConfigSchema = z
                 'brainstem.resting-sample-entropy-cohort/v1' &&
               policy.paperInsight.candidateManifestSha256 ===
                 '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
+              policy.study === undefined &&
               policy.participantValue === undefined
             )
           }
-          return policy.paperInsight === undefined
+          if (policy.analysisId === 'brainstem.full-night-rr-signal-compatibility/v1') {
+            return (
+              policy.study !== undefined &&
+              policy.study.resultBearerTokenEnv !== policy.bearerTokenEnv &&
+              policy.paperInsight === undefined &&
+              policy.participantValue === undefined
+            )
+          }
+          return policy.paperInsight === undefined && policy.study === undefined
         },
         {
           message: 'The reviewed paper policy must match the named cohort analysis'
@@ -646,6 +666,15 @@ export const C2DEnvironmentConfigSchema = z
     {
       message:
         'Private dataset environments require disabled algorithm networking, bounded contract-validated single-JSON results, and disabled image builds'
+    }
+  )
+  .refine(
+    (data) =>
+      !data.privateDataset?.study ||
+      (data.consumerResultPolicy.mode === 'singleJson' &&
+        data.consumerResultPolicy.maxBytes <= 256 * 1024),
+    {
+      message: 'Study result publication requires a result limit of at most 256 KiB'
     }
   )
   .refine((data) => !data.privateDataset || data.storageExpiry === 14 * 24 * 60 * 60, {

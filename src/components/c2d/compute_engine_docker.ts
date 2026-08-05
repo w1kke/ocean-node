@@ -93,6 +93,7 @@ import {
   ParticipantValueError,
   prepareParticipantValue
 } from './participantValue.js'
+import { commitStudyResult, StudyResultCommitError } from './studyResult.js'
 import {
   assertPersonalInsightConfiguration,
   claimPersonalInsightGrant,
@@ -1574,6 +1575,7 @@ export class C2DEngineDocker extends C2DEngine {
     job.resultValidation = undefined
     job.additionalViewers = []
     delete job.privateInputChecksum
+    delete job.privateSourceSnapshotSha256
     if (job.privateResultRetention) {
       job.privateResultRetention.resultDeletedAt ??= Math.floor(Date.now() / 1000)
       delete job.privateResultRetention.inputChecksum
@@ -2928,6 +2930,32 @@ export class C2DEngineDocker extends C2DEngine {
 
       const outputsPath = this.getStoragePath() + '/' + job.jobId + '/data/outputs/'
       if (
+        privatePolicy?.study &&
+        job.status === C2DStatusNumber.PublishingResults &&
+        job.resultValidation &&
+        singleJsonResult
+      ) {
+        try {
+          await commitStudyResult(
+            job,
+            singleJsonResult,
+            privatePolicy,
+            outputsPath + 'result.json'
+          )
+        } catch (error) {
+          CORE_LOGGER.error('Failed to commit study result: ' + error.message)
+          if (error instanceof StudyResultCommitError && error.retryable) {
+            if ((await this.db.updateJob(job)) !== 1) {
+              throw new Error('retryable study result state was not persisted')
+            }
+            return
+          }
+          job.status = C2DStatusNumber.ResultsFetchFailed
+          job.statusText = C2DStatusText.ResultsFetchFailed
+          job.resultValidation = undefined
+        }
+      }
+      if (
         privatePolicy?.participantValue &&
         job.status === C2DStatusNumber.PublishingResults &&
         job.resultValidation &&
@@ -2998,8 +3026,8 @@ export class C2DEngineDocker extends C2DEngine {
             typeof storage.upload === 'function'
 
           if (resultPolicy.mode === 'singleJson') {
-            if (privatePolicy?.participantValue) {
-              // The validated result was staged before the value callback.
+            if (privatePolicy?.participantValue || privatePolicy?.study) {
+              // The validated result was staged before its external callback.
             } else if (canUpload) {
               let uploadStream = Readable.from([singleJsonResult])
               if (output.encryption?.key) {
@@ -3287,6 +3315,7 @@ export class C2DEngineDocker extends C2DEngine {
     delete job.encryptedDockerRegistryAuth
     delete job.output
     delete job.privateInputChecksum
+    delete job.privateSourceSnapshotSha256
   }
 
   private async cleanupPrivateJobMaterial(
@@ -4384,6 +4413,7 @@ export class C2DEngineDocker extends C2DEngine {
             privateDatasetPolicy
           )
           job.privateInputChecksum = provisioned.checksum
+          job.privateSourceSnapshotSha256 = provisioned.sourceSnapshotSha256
         } catch (e) {
           CORE_LOGGER.error(`Unable to provision private dataset: ${e.message}`)
           appendFileSync(

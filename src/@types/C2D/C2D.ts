@@ -122,11 +122,18 @@ export interface PrivateDatasetPolicy {
     | 'brainstem.resting-rr-cohort-summary/v1'
     | 'brainstem.resting-hrv-methods/v1'
     | 'brainstem.resting-rr-sample-entropy/v1'
+    | 'brainstem.full-night-rr-signal-compatibility/v1'
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
   bearerTokenEnv: string
   releaseId: string
+  study?: {
+    proposalId: string
+    revisionId: string
+    revisionSha256: string
+    resultBearerTokenEnv: string
+  }
   paperInsight?: {
     algorithmVersion: '0.1.0'
     inputSchema:
@@ -489,6 +496,7 @@ export interface DBComputeJob extends ComputeJob {
   participantValueRequest?: ParticipantValueRequest
   privateResultRetention?: DBPrivateResultRetention
   privateInputChecksum?: string
+  privateSourceSnapshotSha256?: string
   personalInsightRunId?: string
   personalInsightHistoryId?: string
   personalInsightState?: 'pending' | 'complete' | 'rejected'

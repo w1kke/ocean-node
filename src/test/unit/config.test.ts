@@ -146,6 +146,53 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset
       }).success
     ).to.equal(true)
+    const reviewedStudy = {
+      ...privateDataset,
+      analysisId: 'brainstem.full-night-rr-signal-compatibility/v1',
+      participantValue: undefined as undefined,
+      study: {
+        proposalId: 'study_a',
+        revisionId: 'revision_b',
+        revisionSha256: 'c'.repeat(64),
+        resultBearerTokenEnv: 'STUDY_RESULT_NODE_TOKEN'
+      }
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: reviewedStudy
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262145,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: reviewedStudy
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: { ...reviewedStudy, study: undefined }
+      }).success
+    ).to.equal(false)
     const reviewedMethods = {
       ...privateDataset,
       analysisId: 'brainstem.resting-hrv-methods/v1',
@@ -174,6 +221,18 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: reviewedMethods
       }).success
     ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.insight-result/v1'
+        },
+        privateDataset: { ...reviewedMethods, study: reviewedStudy.study }
+      }).success
+    ).to.equal(false)
     const sampleEntropy = {
       ...reviewedMethods,
       analysisId: 'brainstem.resting-rr-sample-entropy/v1',

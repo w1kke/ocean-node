@@ -70,6 +70,7 @@ function getInternalStructure(job: DBComputeJob): any {
     participantValueRequest: job.participantValueRequest,
     privateResultRetention: job.privateResultRetention,
     privateInputChecksum: job.privateInputChecksum,
+    privateSourceSnapshotSha256: job.privateSourceSnapshotSha256,
     personalInsightRunId: job.personalInsightRunId,
     personalInsightHistoryId: job.personalInsightHistoryId,
     personalInsightState: job.personalInsightState
