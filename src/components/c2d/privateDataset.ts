@@ -23,6 +23,7 @@ const ANALYSIS_HEADER = 'x-brainstem-analysis-id'
 const STUDY_PROPOSAL_HEADER = 'x-brainstem-study-proposal-id'
 const STUDY_REVISION_HEADER = 'x-brainstem-study-revision-id'
 const STUDY_REVISION_SHA256_HEADER = 'x-brainstem-study-revision-sha256'
+const STUDY_DATA_PERMIT_HEADER = 'x-brainstem-study-data-permit-id'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
@@ -133,6 +134,7 @@ export function assertPrivateDatasetConfiguration(
       !/^study_[0-9a-f]{1,64}$/.test(policy.study.proposalId) ||
       !/^revision_[0-9a-f]{1,64}$/.test(policy.study.revisionId) ||
       !SHA256.test(policy.study.revisionSha256) ||
+      !/^data_permit_[0-9a-f]{32}$/.test(policy.study.dataPermitId) ||
       !/^[A-Z][A-Z0-9_]{0,63}$/.test(policy.study.resultBearerTokenEnv) ||
       policy.study.resultBearerTokenEnv === policy.bearerTokenEnv ||
       policy.paperInsight !== undefined ||
@@ -242,7 +244,8 @@ function requestHeaders(
       [
         STUDY_PROPOSAL_HEADER,
         STUDY_REVISION_HEADER,
-        STUDY_REVISION_SHA256_HEADER
+        STUDY_REVISION_SHA256_HEADER,
+        STUDY_DATA_PERMIT_HEADER
       ].includes(key.toLowerCase())
     ) {
       throw new PrivateDatasetError('private_dataset_study_header_is_reserved')
@@ -263,7 +266,8 @@ function requestHeaders(
       ? {
           'X-Brainstem-Study-Proposal-Id': policy.study.proposalId,
           'X-Brainstem-Study-Revision-Id': policy.study.revisionId,
-          'X-Brainstem-Study-Revision-SHA256': policy.study.revisionSha256
+          'X-Brainstem-Study-Revision-SHA256': policy.study.revisionSha256,
+          'X-Brainstem-Study-Data-Permit-Id': policy.study.dataPermitId
         }
       : {})
   }

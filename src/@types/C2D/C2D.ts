@@ -132,6 +132,7 @@ export interface PrivateDatasetPolicy {
     proposalId: string
     revisionId: string
     revisionSha256: string
+    dataPermitId: string
     resultBearerTokenEnv: string
   }
   paperInsight?: {

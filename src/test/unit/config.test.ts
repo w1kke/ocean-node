@@ -154,6 +154,7 @@ describe('Should require an explicit consumer result policy', () => {
         proposalId: 'study_a',
         revisionId: 'revision_b',
         revisionSha256: 'c'.repeat(64),
+        dataPermitId: `data_permit_${'d'.repeat(32)}`,
         resultBearerTokenEnv: 'STUDY_RESULT_NODE_TOKEN'
       }
     }

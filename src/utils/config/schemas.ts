@@ -320,6 +320,7 @@ export const C2DEnvironmentConfigSchema = z
             proposalId: z.string().regex(/^study_[0-9a-f]{1,64}$/),
             revisionId: z.string().regex(/^revision_[0-9a-f]{1,64}$/),
             revisionSha256: z.string().regex(/^[0-9a-f]{64}$/),
+            dataPermitId: z.string().regex(/^data_permit_[0-9a-f]{32}$/),
             resultBearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
           })
           .strict()

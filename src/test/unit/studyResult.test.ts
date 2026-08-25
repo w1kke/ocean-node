@@ -89,6 +89,7 @@ describe('Study result commit', () => {
         proposalId: 'study_a',
         revisionId: 'revision_b',
         revisionSha256: 'e'.repeat(64),
+        dataPermitId: `data_permit_${'d'.repeat(32)}`,
         resultBearerTokenEnv: 'CRAB_RESULT_TOKEN'
       }
     }

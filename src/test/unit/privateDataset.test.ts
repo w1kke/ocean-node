@@ -38,6 +38,7 @@ describe('Private dataset provisioning', () => {
   let receivedStudyProposalId: string
   let receivedStudyRevisionId: string
   let receivedStudyRevisionSha256: string
+  let receivedStudyDataPermitId: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
@@ -53,6 +54,7 @@ describe('Private dataset provisioning', () => {
     receivedStudyProposalId = ''
     receivedStudyRevisionId = ''
     receivedStudyRevisionSha256 = ''
+    receivedStudyDataPermitId = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
@@ -69,6 +71,9 @@ describe('Private dataset provisioning', () => {
       )
       receivedStudyRevisionSha256 = String(
         request.headers['x-brainstem-study-revision-sha256'] ?? ''
+      )
+      receivedStudyDataPermitId = String(
+        request.headers['x-brainstem-study-data-permit-id'] ?? ''
       )
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
@@ -192,6 +197,7 @@ describe('Private dataset provisioning', () => {
         proposalId: 'study_a',
         revisionId: 'revision_b',
         revisionSha256: 'd'.repeat(64),
+        dataPermitId: `data_permit_${'e'.repeat(32)}`,
         resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
       }
     }
@@ -233,6 +239,7 @@ describe('Private dataset provisioning', () => {
     expect(receivedStudyProposalId).to.equal('study_a')
     expect(receivedStudyRevisionId).to.equal('revision_b')
     expect(receivedStudyRevisionSha256).to.equal('d'.repeat(64))
+    expect(receivedStudyDataPermitId).to.equal(`data_permit_${'e'.repeat(32)}`)
     expect(downloaded.sourceSnapshotSha256).to.equal('e'.repeat(64))
 
     const fractionalDuration = JSON.parse(body.toString())
@@ -263,6 +270,12 @@ describe('Private dataset provisioning', () => {
     file.headers = { 'X-Brainstem-Study-Proposal-Id': 'study_a' }
     await expectFailure('private_dataset_study_header_is_reserved')
     expect(requestCount).to.equal(0)
+
+    file.headers = {
+      'X-Brainstem-Study-Data-Permit-Id': `data_permit_${'f'.repeat(32)}`
+    }
+    await expectFailure('private_dataset_study_header_is_reserved')
+    expect(requestCount).to.equal(0)
   })
 
   it('requires a source snapshot for reviewed study inputs', async () => {
@@ -273,6 +286,7 @@ describe('Private dataset provisioning', () => {
         proposalId: 'study_a',
         revisionId: 'revision_b',
         revisionSha256: 'd'.repeat(64),
+        dataPermitId: `data_permit_${'e'.repeat(32)}`,
         resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
       }
     }
@@ -377,6 +391,7 @@ describe('Private dataset provisioning', () => {
             proposalId: 'study_a',
             revisionId: 'revision_b',
             revisionSha256: 'd'.repeat(64),
+            dataPermitId: `data_permit_${'e'.repeat(32)}`,
             resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
           }
         },
