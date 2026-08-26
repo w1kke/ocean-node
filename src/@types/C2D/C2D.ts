@@ -155,6 +155,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-heart-overview/v1'
     | 'brainstem.resting-hrv-methods/v1'
     | 'brainstem.resting-rr-sample-entropy/v1'
+    | 'brainstem.sleep-baseline/v1'
   algorithmVersion: '1.0.0' | '0.1.0'
   crabUrl: string
   approvedAlgorithmImage: string
@@ -171,17 +172,20 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-rr/v1'
     | 'brainstem.personal-resting-hrv-methods/v1'
     | 'brainstem.personal-resting-sample-entropy/v1'
+    | 'brainstem.personal-sleep-baseline/v1'
   inputPolicy:
     | 'brainstem.personal-resting-rr/latest-16/v1'
     | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
     | 'brainstem.personal-resting-sample-entropy/latest-4/v1'
+    | 'brainstem.personal-sleep-baseline/latest-7/v1'
   resultContract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
   resultProfile:
     | 'brainstem.personal-resting-heart-overview/v1'
     | 'brainstem.resting-hrv-methods-personal/v1'
     | 'brainstem.resting-sample-entropy-personal/v1'
+    | 'brainstem.sleep-baseline-personal/v1'
   audience: 'brainstem-ocean-node'
-  maximumRecordings: 4 | 16
+  maximumRecordings: 4 | 7 | 16
   maxInputBytes: number
   maxResultBytes: number
   maxJobDuration: number

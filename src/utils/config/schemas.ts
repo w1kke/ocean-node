@@ -385,7 +385,8 @@ export const C2DEnvironmentConfigSchema = z
         analysisId: z.enum([
           'brainstem.personal-resting-heart-overview/v1',
           'brainstem.resting-hrv-methods/v1',
-          'brainstem.resting-rr-sample-entropy/v1'
+          'brainstem.resting-rr-sample-entropy/v1',
+          'brainstem.sleep-baseline/v1'
         ]),
         algorithmVersion: z.enum(['1.0.0', '0.1.0']),
         crabUrl: z
@@ -427,12 +428,14 @@ export const C2DEnvironmentConfigSchema = z
         inputSchema: z.enum([
           'brainstem.personal-resting-rr/v1',
           'brainstem.personal-resting-hrv-methods/v1',
-          'brainstem.personal-resting-sample-entropy/v1'
+          'brainstem.personal-resting-sample-entropy/v1',
+          'brainstem.personal-sleep-baseline/v1'
         ]),
         inputPolicy: z.enum([
           'brainstem.personal-resting-rr/latest-16/v1',
           'brainstem.personal-resting-hrv-methods/latest-16/v1',
-          'brainstem.personal-resting-sample-entropy/latest-4/v1'
+          'brainstem.personal-resting-sample-entropy/latest-4/v1',
+          'brainstem.personal-sleep-baseline/latest-7/v1'
         ]),
         resultContract: z.enum([
           'brainstem.c2d-result/v1',
@@ -441,15 +444,16 @@ export const C2DEnvironmentConfigSchema = z
         resultProfile: z.enum([
           'brainstem.personal-resting-heart-overview/v1',
           'brainstem.resting-hrv-methods-personal/v1',
-          'brainstem.resting-sample-entropy-personal/v1'
+          'brainstem.resting-sample-entropy-personal/v1',
+          'brainstem.sleep-baseline-personal/v1'
         ]),
         audience: z.literal('brainstem-ocean-node'),
-        maximumRecordings: z.union([z.literal(4), z.literal(16)]),
+        maximumRecordings: z.union([z.literal(4), z.literal(7), z.literal(16)]),
         maxInputBytes: z
           .number()
           .int()
           .min(1)
-          .max(1024 * 1024),
+          .max(8 * 1024 * 1024),
         maxResultBytes: z
           .number()
           .int()
@@ -485,6 +489,8 @@ export const C2DEnvironmentConfigSchema = z
         const legacy =
           policy.analysisId === 'brainstem.personal-resting-heart-overview/v1'
         const methods = policy.analysisId === 'brainstem.resting-hrv-methods/v1'
+        const sampleEntropy =
+          policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1'
         const exactPolicy = legacy
           ? policy.maximumRecordings === 16 &&
             policy.algorithmVersion === '1.0.0' &&
@@ -506,17 +512,28 @@ export const C2DEnvironmentConfigSchema = z
               policy.candidateManifestSha256 !== null &&
               policy.approvedManifestSha256 !== null &&
               policy.referenceSha256 !== null
-            : policy.maximumRecordings === 4 &&
-              policy.algorithmVersion === '0.1.0' &&
-              policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1' &&
-              policy.inputPolicy ===
-                'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
-              policy.resultContract === 'brainstem.insight-result/v1' &&
-              policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
-              policy.candidateManifestSha256 ===
-                '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
-              policy.approvedManifestSha256 !== null &&
-              policy.referenceSha256 !== null
+            : sampleEntropy
+              ? policy.maximumRecordings === 4 &&
+                policy.algorithmVersion === '0.1.0' &&
+                policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1' &&
+                policy.inputPolicy ===
+                  'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
+                policy.resultContract === 'brainstem.insight-result/v1' &&
+                policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
+                policy.candidateManifestSha256 ===
+                  '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
+                policy.approvedManifestSha256 !== null &&
+                policy.referenceSha256 !== null
+              : policy.maximumRecordings === 7 &&
+                policy.algorithmVersion === '0.1.0' &&
+                policy.inputSchema === 'brainstem.personal-sleep-baseline/v1' &&
+                policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-7/v1' &&
+                policy.resultContract === 'brainstem.insight-result/v1' &&
+                policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
+                policy.candidateManifestSha256 ===
+                  '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e' &&
+                policy.approvedManifestSha256 !== null &&
+                policy.referenceSha256 !== null
         if (!exactPolicy) {
           context.addIssue({
             code: z.ZodIssueCode.custom,

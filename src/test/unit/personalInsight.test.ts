@@ -49,6 +49,7 @@ const BFF_TOKEN = 'generated-personal-bff-token-long-enough'
 const ANALYSIS_ID = 'brainstem.personal-resting-heart-overview/v1'
 const METHODS_ANALYSIS_ID = 'brainstem.resting-hrv-methods/v1'
 const SAMPLE_ENTROPY_ANALYSIS_ID = 'brainstem.resting-rr-sample-entropy/v1'
+const SLEEP_BASELINE_ANALYSIS_ID = 'brainstem.sleep-baseline/v1'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const METHODS_APPROVED_SHA256 = '1'.repeat(64)
@@ -56,6 +57,8 @@ const METHODS_REFERENCE_SHA256 =
   '8fb8f2fb8b04af06c002412fc5c8aea94f9a59e9703ccd7943139eb1ded79b15'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+const SLEEP_BASELINE_CANDIDATE_SHA256 =
+  '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
@@ -114,6 +117,23 @@ function sampleEntropyPolicy(crabUrl: string): PersonalInsightPolicy {
     resultContract: 'brainstem.insight-result/v1',
     resultProfile: 'brainstem.resting-sample-entropy-personal/v1',
     maximumRecordings: 4
+  }
+}
+
+function sleepBaselinePolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: SLEEP_BASELINE_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: SLEEP_BASELINE_CANDIDATE_SHA256,
+    approvedManifestSha256: '4'.repeat(64),
+    referenceSha256: '5'.repeat(64),
+    inputSchema: 'brainstem.personal-sleep-baseline/v1',
+    inputPolicy: 'brainstem.personal-sleep-baseline/latest-7/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.sleep-baseline-personal/v1',
+    maximumRecordings: 7,
+    maxInputBytes: 8 * 1024 * 1024
   }
 }
 
@@ -246,6 +266,31 @@ function sampleEntropyInput(): any {
           { length: 300 },
           (_, index) => 990 + 20 * Math.sin(index / 11)
         )
+      }
+    ]
+  }
+}
+
+function sleepBaselineInput(): any {
+  const rrIntervalsMs = Array(18000).fill(1000)
+  return {
+    schema: 'brainstem.personal-sleep-baseline/v1',
+    policy: 'brainstem.personal-sleep-baseline/latest-7/v1',
+    recordings: [
+      {
+        recordingType: 'sleep',
+        durationSeconds: 18000,
+        intervalSemantics: 'detector_rr_unclassified',
+        allowedUse: 'private_descriptive_self_only',
+        quality: {
+          observedIntervalCount: rrIntervalsMs.length,
+          acceptedIntervalCount: rrIntervalsMs.length,
+          acceptedFraction: 1,
+          durationCoverageRatio: 1,
+          normalToNormalProvenance: 'unverified',
+          officialMethodInputCompatible: false
+        },
+        rrIntervalsMs
       }
     ]
   }
@@ -625,6 +670,25 @@ describe('personal Insight boundary', () => {
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
   })
 
+  it('binds the sleep baseline release and exact private full-night contract', () => {
+    const configured = sleepBaselinePolicy('https://crab.internal/')
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(sleepBaselineInput())),
+        configured
+      )
+    ).not.to.throw()
+
+    const mismatchedQuality = sleepBaselineInput()
+    mismatchedQuality.recordings[0].quality.acceptedIntervalCount -= 1
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(mismatchedQuality)),
+        configured
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+  })
+
   it('retries only an idempotent completion after a lost connection', async () => {
     completionConnectionFailures = 1
     await completePersonalInsightRun(
@@ -922,6 +986,13 @@ describe('personal Insight boundary', () => {
         personalInsight: { ...reviewedMethods, referenceSha256: null }
       }).success
     ).to.equal(false)
+
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: sleepBaselinePolicy('https://crab.internal/')
+      }).success
+    ).to.equal(true)
 
     expect(
       C2DEnvironmentConfigSchema.safeParse({

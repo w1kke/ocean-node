@@ -20,6 +20,8 @@ const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+const SLEEP_BASELINE_CANDIDATE_SHA256 =
+  '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -142,15 +144,30 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       SHA256.test(policy.referenceSha256)
     )
   }
+  if (policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1') {
+    return (
+      policy.maximumRecordings === 4 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1' &&
+      policy.inputPolicy === 'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
+      policy.candidateManifestSha256 === SAMPLE_ENTROPY_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      typeof policy.referenceSha256 === 'string' &&
+      SHA256.test(policy.referenceSha256)
+    )
+  }
   return (
-    policy.maximumRecordings === 4 &&
-    policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1' &&
+    policy.maximumRecordings === 7 &&
+    policy.analysisId === 'brainstem.sleep-baseline/v1' &&
     policy.algorithmVersion === '0.1.0' &&
-    policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1' &&
-    policy.inputPolicy === 'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
+    policy.inputSchema === 'brainstem.personal-sleep-baseline/v1' &&
+    policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-7/v1' &&
     policy.resultContract === 'brainstem.insight-result/v1' &&
-    policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
-    policy.candidateManifestSha256 === SAMPLE_ENTROPY_CANDIDATE_SHA256 &&
+    policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
+    policy.candidateManifestSha256 === SLEEP_BASELINE_CANDIDATE_SHA256 &&
     typeof policy.approvedManifestSha256 === 'string' &&
     SHA256.test(policy.approvedManifestSha256) &&
     typeof policy.referenceSha256 === 'string' &&
@@ -688,6 +705,54 @@ const sampleEntropyPersonalInput = z
   })
   .strict()
 
+const sleepRecording = z
+  .object({
+    recordingType: z.literal('sleep'),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(5 * 60 * 60)
+      .max(12 * 60 * 60),
+    intervalSemantics: z.literal('detector_rr_unclassified'),
+    allowedUse: z.literal('private_descriptive_self_only'),
+    quality: z
+      .object({
+        observedIntervalCount: z.number().int().min(9000).max(172800),
+        acceptedIntervalCount: z.number().int().min(9000).max(172800),
+        acceptedFraction: z.number().finite().min(0.95).max(1),
+        durationCoverageRatio: z.number().finite().min(0.9).max(1.1),
+        normalToNormalProvenance: z.literal('unverified'),
+        officialMethodInputCompatible: z.literal(false)
+      })
+      .strict(),
+    rrIntervalsMs: z.array(z.number().finite().min(250).max(2000)).min(9000).max(172800)
+  })
+  .strict()
+  .superRefine((recording, context) => {
+    const accepted = recording.rrIntervalsMs.length
+    const fraction = accepted / recording.quality.observedIntervalCount
+    const coverage =
+      recording.rrIntervalsMs.reduce((total, value) => total + value, 0) /
+      1000 /
+      recording.durationSeconds
+    if (
+      recording.quality.acceptedIntervalCount !== accepted ||
+      recording.quality.observedIntervalCount < accepted ||
+      Math.abs(recording.quality.acceptedFraction - fraction) > 0.000001 ||
+      Math.abs(recording.quality.durationCoverageRatio - coverage) > 0.000001
+    ) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'quality mismatch' })
+    }
+  })
+
+const sleepBaselinePersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-sleep-baseline/v1'),
+    policy: z.literal('brainstem.personal-sleep-baseline/latest-7/v1'),
+    recordings: z.array(sleepRecording).min(1).max(7)
+  })
+  .strict()
+
 export function validatePersonalInsightInput(
   bytes: Buffer,
   policy: PersonalInsightPolicy
@@ -703,7 +768,9 @@ export function validatePersonalInsightInput(
       ? methodsPersonalInput
       : policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1'
         ? sampleEntropyPersonalInput
-        : legacyPersonalInput
+        : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
+          ? sleepBaselinePersonalInput
+          : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }
