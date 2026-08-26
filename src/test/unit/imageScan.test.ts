@@ -4,7 +4,7 @@ import sinon from 'sinon'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
-import { PassThrough, Readable } from 'stream'
+import { PassThrough, Readable, Writable } from 'stream'
 
 import {
   C2DStatusNumber,
@@ -228,6 +228,33 @@ describe('fail-closed image scanning', () => {
     })
     expect(scanner.start.calledOnce).to.equal(true)
     expect(Buffer.concat(chunks).toString()).to.equal('image')
+  })
+
+  it('waits for scanner stdin to finish before returning', async () => {
+    const { engine } = await makeEngine({
+      tempFolder,
+      scanImages: true,
+      severities: ['HIGH']
+    })
+    const input = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback()
+      },
+      final(callback) {
+        setTimeout(callback, 10)
+      }
+    })
+    const scanner = {
+      attach: sinon.stub().resolves(input),
+      start: sinon.stub().resolves()
+    }
+    ;(engine as any).docker = {
+      getImage: () => ({ get: sinon.stub().resolves(Readable.from(['image'])) })
+    }
+
+    await (engine as any).sendImageToScanner(scanner, 'example/image')
+
+    expect(input.writableFinished).to.equal(true)
   })
 
   it('uses one severity list for Trivy and evaluation and removes the scanner', async () => {

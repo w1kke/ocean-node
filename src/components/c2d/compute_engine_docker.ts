@@ -4774,8 +4774,7 @@ export class C2DEngineDocker extends C2DEngine {
         else input.once('drain', callback)
       },
       final(callback) {
-        input.end()
-        callback()
+        input.end(callback)
       }
     })
     input.once('error', (error) => sink.destroy(error))
