@@ -251,6 +251,27 @@ describe('**********         Docker Image Cleanup Integration Tests', () => {
         assert.fail('cleanupOldImages should not throw errors for non-existent images')
       }
     })
+
+    it('should retain approved personal Insight images', async () => {
+      const approvedImage = `brainstem/personal@sha256:${'a'.repeat(64)}`
+      const oldTimestamp = Math.floor(Date.now() / 1000) - 8 * 24 * 60 * 60
+      await new Promise((resolve, reject) => {
+        const { db } = sqliteProvider as any
+        db.run(
+          'INSERT OR REPLACE INTO docker_images (image, lastUsedTimestamp) VALUES (?, ?)',
+          [approvedImage, oldTimestamp],
+          (err: Error | null) => (err ? reject(err) : resolve(undefined))
+        )
+      })
+      ;(dockerEngine as any).personalInsightPolicies.set('personal-env', {
+        approvedAlgorithmImage: approvedImage
+      })
+
+      await (dockerEngine as any).cleanupOldImages()
+
+      expect(await sqliteProvider.getOldImages(7)).to.include(approvedImage)
+      ;(dockerEngine as any).personalInsightPolicies.delete('personal-env')
+    })
   })
 
   describe('Image Cleanup with Real Docker (if available)', () => {

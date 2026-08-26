@@ -1155,7 +1155,14 @@ export class C2DEngineDocker extends C2DEngine {
     if (!this.docker) return
 
     try {
-      const oldImages = await this.db.getOldImages(this.retentionDays)
+      const approvedPersonalImages = new Set(
+        [...this.personalInsightPolicies.values()].map(
+          (policy) => policy.approvedAlgorithmImage
+        )
+      )
+      const oldImages = (await this.db.getOldImages(this.retentionDays)).filter(
+        (image) => !approvedPersonalImages.has(image)
+      )
       if (oldImages.length === 0) {
         CORE_LOGGER.debug('No old images to clean up')
         return
