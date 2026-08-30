@@ -352,18 +352,21 @@ describe('Private dataset provisioning', () => {
       analysisId: 'brainstem.overnight-heart-rate-change/v1',
       paperInsight: {
         ...basePaper,
-        inputSchema: 'brainstem.overnight-heart-rate-change-cohort/v1',
+        algorithmVersion: '0.2.0',
+        inputSchema: 'brainstem.overnight-heart-rate-change-cohort/v2',
         candidateManifestSha256:
-          '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7',
+          '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907',
         evidenceTier: 'E1_public_reproduced'
       }
     }
     body = Buffer.from(
       JSON.stringify({
-        schema: 'brainstem.overnight-heart-rate-change-cohort/v1',
-        policy: 'brainstem.overnight-heart-rate-change-cohort/distinct-9/v1',
+        schema: 'brainstem.overnight-heart-rate-change-cohort/v2',
+        policy: 'brainstem.overnight-heart-rate-change-cohort/distinct-9-movement/v2',
         allowedUse: 'aggregate_overnight_change_only',
         sourceType: 'approved_real_cohort',
+        movementSchema: 'brainstem.normalized-movement/v1',
+        movementThresholdMilliG: 100,
         participants: [
           {
             subjectId: '1'.repeat(64),
@@ -374,6 +377,13 @@ describe('Private dataset provisioning', () => {
               acceptedIntervalCount: 18000,
               intervalSumMs: 18000000,
               durationCoverageRatio: 1,
+              movementCoverageFraction: 1,
+              alignedHeartRateSampleFraction: 1,
+              movementEventCount: 10,
+              movementEventRatePerHour: 2,
+              quietWindowProportion: 0.9,
+              quietMeanHeartRateBpm: 60,
+              movementMeanHeartRateBpm: 72,
               normalToNormalProvenance: 'unverified',
               officialMethodInputCompatible: false
             }))
@@ -383,6 +393,11 @@ describe('Private dataset provisioning', () => {
     )
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
     rmSync(destination)
+
+    const invalidOvernight = JSON.parse(body.toString())
+    invalidOvernight.participants[0].nights[0].rawMovementSamples = [[0, 0, 1000]]
+    body = Buffer.from(JSON.stringify(invalidOvernight))
+    await expectFailure('private_dataset_contract_invalid')
 
     const intervals = Array(600).fill(500)
     policy = {

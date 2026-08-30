@@ -25,7 +25,9 @@ const METHODS_CANDIDATE_SHA256 =
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
-  '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7'
+  '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
+const MOVEMENT_SCHEMA = 'brainstem.normalized-movement/v1'
+const MOVEMENT_THRESHOLD_MILLIG = 100
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
   '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
 const STANDING_RESPONSE_CANDIDATE_SHA256 =
@@ -110,9 +112,9 @@ export function assertPrivateDatasetConfiguration(
   }
   if (
     policy.analysisId === 'brainstem.overnight-heart-rate-change/v1' &&
-    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+    (policy.paperInsight?.algorithmVersion !== '0.2.0' ||
       policy.paperInsight.inputSchema !==
-        'brainstem.overnight-heart-rate-change-cohort/v1' ||
+        'brainstem.overnight-heart-rate-change-cohort/v2' ||
       policy.paperInsight.candidateManifestSha256 !== OVERNIGHT_CHANGE_CANDIDATE_SHA256 ||
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
       policy.paperInsight.referenceSha256 !== null ||
@@ -272,7 +274,7 @@ function validateReviewedCohortInput(
     )
     const overnight =
       policy.paperInsight.inputSchema ===
-      'brainstem.overnight-heart-rate-change-cohort/v1'
+      'brainstem.overnight-heart-rate-change-cohort/v2'
     const repeatability =
       policy.paperInsight.inputSchema === 'brainstem.resting-hrv-repeatability-cohort/v1'
     const standing =
@@ -286,16 +288,20 @@ function validateReviewedCohortInput(
       Object.keys(dataset).sort().join(',') !==
         (guidedBreathing
           ? 'allowedUse,participants,policy,protocol,schema,sourceType'
-          : overnight || repeatability || standing
-            ? 'allowedUse,participants,policy,schema,sourceType'
-            : 'participants,schema') ||
+          : overnight
+            ? 'allowedUse,movementSchema,movementThresholdMilliG,participants,policy,schema,sourceType'
+            : repeatability || standing
+              ? 'allowedUse,participants,policy,schema,sourceType'
+              : 'participants,schema') ||
       dataset.schema !== policy.paperInsight.inputSchema ||
       ((overnight || repeatability || standing || guidedBreathing) &&
         dataset.sourceType !== 'approved_real_cohort') ||
       (overnight &&
         (dataset.policy !==
-          'brainstem.overnight-heart-rate-change-cohort/distinct-9/v1' ||
-          dataset.allowedUse !== 'aggregate_overnight_change_only')) ||
+          'brainstem.overnight-heart-rate-change-cohort/distinct-9-movement/v2' ||
+          dataset.allowedUse !== 'aggregate_overnight_change_only' ||
+          dataset.movementSchema !== MOVEMENT_SCHEMA ||
+          dataset.movementThresholdMilliG !== MOVEMENT_THRESHOLD_MILLIG)) ||
       (repeatability &&
         (dataset.policy !== 'brainstem.resting-hrv-repeatability-cohort/distinct-7/v1' ||
           dataset.allowedUse !== 'aggregate_resting_repeatability_only')) ||
@@ -347,7 +353,7 @@ function validateReviewedCohortInput(
             !night ||
             Array.isArray(night) ||
             Object.keys(night).sort().join(',') !==
-              'acceptedIntervalCount,durationCoverageRatio,durationSeconds,intervalSumMs,nightIndex,normalToNormalProvenance,observedIntervalCount,officialMethodInputCompatible' ||
+              'acceptedIntervalCount,alignedHeartRateSampleFraction,durationCoverageRatio,durationSeconds,intervalSumMs,movementCoverageFraction,movementEventCount,movementEventRatePerHour,movementMeanHeartRateBpm,nightIndex,normalToNormalProvenance,observedIntervalCount,officialMethodInputCompatible,quietMeanHeartRateBpm,quietWindowProportion' ||
             night.nightIndex !== index + 1 ||
             !Number.isInteger(night.durationSeconds) ||
             night.durationSeconds < 18_000 ||
@@ -367,6 +373,39 @@ function validateReviewedCohortInput(
               night.durationCoverageRatio -
                 night.intervalSumMs / 1000 / night.durationSeconds
             ) > 0.000001 ||
+            typeof night.movementCoverageFraction !== 'number' ||
+            !Number.isFinite(night.movementCoverageFraction) ||
+            night.movementCoverageFraction < 0.8 ||
+            night.movementCoverageFraction > 1 ||
+            typeof night.alignedHeartRateSampleFraction !== 'number' ||
+            !Number.isFinite(night.alignedHeartRateSampleFraction) ||
+            night.alignedHeartRateSampleFraction < 0.8 ||
+            night.alignedHeartRateSampleFraction > 1 ||
+            !Number.isInteger(night.movementEventCount) ||
+            night.movementEventCount < 0 ||
+            night.movementEventCount > night.durationSeconds ||
+            typeof night.movementEventRatePerHour !== 'number' ||
+            !Number.isFinite(night.movementEventRatePerHour) ||
+            Math.abs(
+              night.movementEventRatePerHour -
+                night.movementEventCount / (night.durationSeconds / 3600)
+            ) > 0.000001 ||
+            typeof night.quietWindowProportion !== 'number' ||
+            !Number.isFinite(night.quietWindowProportion) ||
+            night.quietWindowProportion < 0 ||
+            night.quietWindowProportion > 1 ||
+            ![night.quietMeanHeartRateBpm, night.movementMeanHeartRateBpm].every(
+              (value) =>
+                value === null ||
+                (typeof value === 'number' &&
+                  Number.isFinite(value) &&
+                  value >= 20 &&
+                  value <= 250)
+            ) ||
+            (night.quietWindowProportion === 0) !==
+              (night.quietMeanHeartRateBpm === null) ||
+            (night.movementEventCount === 0) !==
+              (night.movementMeanHeartRateBpm === null) ||
             night.normalToNormalProvenance !== 'unverified' ||
             night.officialMethodInputCompatible !== false
           ) {

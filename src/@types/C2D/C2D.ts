@@ -132,11 +132,11 @@ export interface PrivateDatasetPolicy {
   bearerTokenEnv: string
   releaseId: string
   paperInsight?: {
-    algorithmVersion: '0.1.0'
+    algorithmVersion: '0.1.0' | '0.2.0'
     inputSchema:
       | 'brainstem.resting-hrv-methods-cohort/v1'
       | 'brainstem.resting-sample-entropy-cohort/v1'
-      | 'brainstem.overnight-heart-rate-change-cohort/v1'
+      | 'brainstem.overnight-heart-rate-change-cohort/v2'
       | 'brainstem.resting-hrv-repeatability-cohort/v1'
       | 'brainstem.standing-heart-rate-response-cohort/v1'
       | 'brainstem.guided-breathing-response-cohort/v1'
@@ -171,7 +171,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.resting-hrv-repeatability/v1'
     | 'brainstem.standing-heart-rate-response/v1'
     | 'brainstem.guided-breathing-response/v1'
-  algorithmVersion: '1.0.0' | '0.1.0'
+  algorithmVersion: '1.0.0' | '0.1.0' | '0.2.0'
   crabUrl: string
   approvedAlgorithmImage: string
   candidateManifestSha256: string | null
@@ -191,7 +191,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-hrv-methods/v1'
     | 'brainstem.personal-resting-sample-entropy/v1'
     | 'brainstem.personal-sleep-baseline/v1'
-    | 'brainstem.personal-overnight-heart-rate-change/v1'
+    | 'brainstem.personal-overnight-heart-rate-change/v2'
     | 'brainstem.personal-resting-hrv-repeatability/v1'
     | 'brainstem.personal-standing-heart-rate-response/v1'
     | 'brainstem.personal-guided-breathing-response/v1'
@@ -200,7 +200,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
     | 'brainstem.personal-resting-sample-entropy/latest-4/v1'
     | 'brainstem.personal-sleep-baseline/latest-7/v1'
-    | 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1'
+    | 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2'
     | 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1'
     | 'brainstem.personal-standing-heart-rate-response/latest-7/v1'
     | 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1'
@@ -210,7 +210,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.resting-hrv-methods-personal/v1'
     | 'brainstem.resting-sample-entropy-personal/v1'
     | 'brainstem.sleep-baseline-personal/v1'
-    | 'brainstem.overnight-heart-rate-change-personal/v1'
+    | 'brainstem.overnight-heart-rate-change-personal/v2'
     | 'brainstem.resting-hrv-repeatability-personal/v1'
     | 'brainstem.standing-heart-rate-response-personal/v1'
     | 'brainstem.guided-breathing-response-personal/v1'

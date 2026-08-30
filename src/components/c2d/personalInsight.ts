@@ -23,7 +23,7 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
-  '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7'
+  '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
   '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
 const STANDING_RESPONSE_CANDIDATE_SHA256 =
@@ -173,12 +173,12 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
   if (policy.analysisId === 'brainstem.overnight-heart-rate-change/v1') {
     return (
       policy.maximumRecordings === 9 &&
-      policy.algorithmVersion === '0.1.0' &&
-      policy.inputSchema === 'brainstem.personal-overnight-heart-rate-change/v1' &&
+      policy.algorithmVersion === '0.2.0' &&
+      policy.inputSchema === 'brainstem.personal-overnight-heart-rate-change/v2' &&
       policy.inputPolicy ===
-        'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1' &&
+        'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2' &&
       policy.resultContract === 'brainstem.insight-result/v1' &&
-      policy.resultProfile === 'brainstem.overnight-heart-rate-change-personal/v1' &&
+      policy.resultProfile === 'brainstem.overnight-heart-rate-change-personal/v2' &&
       policy.candidateManifestSha256 === OVERNIGHT_CHANGE_CANDIDATE_SHA256 &&
       typeof policy.approvedManifestSha256 === 'string' &&
       SHA256.test(policy.approvedManifestSha256) &&
@@ -841,6 +841,13 @@ const overnightNight = z
     acceptedIntervalCount: z.number().int().min(9000).max(172800),
     intervalSumMs: z.number().finite().positive(),
     durationCoverageRatio: z.number().finite().min(0.9).max(1.1),
+    movementCoverageFraction: z.number().finite().min(0.8).max(1),
+    alignedHeartRateSampleFraction: z.number().finite().min(0.8).max(1),
+    movementEventCount: z.number().int().min(0),
+    movementEventRatePerHour: z.number().finite().min(0),
+    quietWindowProportion: z.number().finite().min(0).max(1),
+    quietMeanHeartRateBpm: z.number().finite().min(20).max(250).nullable(),
+    movementMeanHeartRateBpm: z.number().finite().min(20).max(250).nullable(),
     normalToNormalProvenance: z.literal('unverified'),
     officialMethodInputCompatible: z.literal(false)
   })
@@ -851,7 +858,14 @@ const overnightNight = z
       night.acceptedIntervalCount / night.observedIntervalCount < 0.95 ||
       Math.abs(
         night.durationCoverageRatio - night.intervalSumMs / 1000 / night.durationSeconds
-      ) > 0.000001
+      ) > 0.000001 ||
+      night.movementEventCount > night.durationSeconds ||
+      Math.abs(
+        night.movementEventRatePerHour -
+          night.movementEventCount / (night.durationSeconds / 3600)
+      ) > 0.000001 ||
+      (night.quietWindowProportion === 0) !== (night.quietMeanHeartRateBpm === null) ||
+      (night.movementEventCount === 0) !== (night.movementMeanHeartRateBpm === null)
     ) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: 'night quality mismatch' })
     }
@@ -859,10 +873,12 @@ const overnightNight = z
 
 const overnightPersonalInput = z
   .object({
-    schema: z.literal('brainstem.personal-overnight-heart-rate-change/v1'),
+    schema: z.literal('brainstem.personal-overnight-heart-rate-change/v2'),
     policy: z.literal(
-      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1'
+      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2'
     ),
+    movementSchema: z.literal('brainstem.normalized-movement/v1'),
+    movementThresholdMilliG: z.literal(100),
     nights: z.array(overnightNight).length(9)
   })
   .strict()
@@ -994,7 +1010,7 @@ export function validatePersonalInsightInput(
       ? methodsPersonalInput
       : policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1'
         ? sampleEntropyPersonalInput
-        : policy.inputSchema === 'brainstem.personal-overnight-heart-rate-change/v1'
+        : policy.inputSchema === 'brainstem.personal-overnight-heart-rate-change/v2'
           ? overnightPersonalInput
           : policy.inputSchema === 'brainstem.personal-resting-hrv-repeatability/v1'
             ? repeatabilityPersonalInput

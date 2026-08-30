@@ -65,7 +65,7 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
-  '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7'
+  '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
   '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
 const STANDING_RESPONSE_CANDIDATE_SHA256 =
@@ -158,15 +158,16 @@ function overnightChangePolicy(crabUrl: string): PersonalInsightPolicy {
   return {
     ...policy(crabUrl),
     analysisId: OVERNIGHT_CHANGE_ANALYSIS_ID,
-    algorithmVersion: '0.1.0',
+    algorithmVersion: '0.2.0',
     candidateManifestSha256: OVERNIGHT_CHANGE_CANDIDATE_SHA256,
     approvedManifestSha256: '6'.repeat(64),
     referenceSha256: null,
     evidenceTier: 'E1_public_reproduced',
-    inputSchema: 'brainstem.personal-overnight-heart-rate-change/v1',
-    inputPolicy: 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1',
+    inputSchema: 'brainstem.personal-overnight-heart-rate-change/v2',
+    inputPolicy:
+      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2',
     resultContract: 'brainstem.insight-result/v1',
-    resultProfile: 'brainstem.overnight-heart-rate-change-personal/v1',
+    resultProfile: 'brainstem.overnight-heart-rate-change-personal/v2',
     maximumRecordings: 9,
     maxInputBytes: 8 * 1024 * 1024
   }
@@ -383,8 +384,11 @@ function sleepBaselineInput(): any {
 
 function overnightChangeInput(): any {
   return {
-    schema: 'brainstem.personal-overnight-heart-rate-change/v1',
-    policy: 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1',
+    schema: 'brainstem.personal-overnight-heart-rate-change/v2',
+    policy:
+      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2',
+    movementSchema: 'brainstem.normalized-movement/v1',
+    movementThresholdMilliG: 100,
     nights: Array.from({ length: 9 }, (_, index) => ({
       nightIndex: index + 1,
       durationSeconds: 18000,
@@ -392,6 +396,13 @@ function overnightChangeInput(): any {
       acceptedIntervalCount: 18000,
       intervalSumMs: 18000000,
       durationCoverageRatio: 1,
+      movementCoverageFraction: 1,
+      alignedHeartRateSampleFraction: 1,
+      movementEventCount: 10,
+      movementEventRatePerHour: 2,
+      quietWindowProportion: 0.9,
+      quietMeanHeartRateBpm: 60,
+      movementMeanHeartRateBpm: 72,
       normalToNormalProvenance: 'unverified',
       officialMethodInputCompatible: false
     }))
@@ -970,6 +981,12 @@ describe('personal Insight boundary', () => {
     wrongOrder.nights[8].nightIndex = 8
     expect(() =>
       validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongOrder)), overnight)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+
+    const rawMovement = overnightChangeInput()
+    rawMovement.nights[0].rawMovementSamples = [[0, 0, 1000]]
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(rawMovement)), overnight)
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
   })
 
