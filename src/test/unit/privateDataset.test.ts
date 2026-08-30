@@ -354,7 +354,7 @@ describe('Private dataset provisioning', () => {
         ...basePaper,
         inputSchema: 'brainstem.overnight-heart-rate-change-cohort/v1',
         candidateManifestSha256:
-          '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754',
+          '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7',
         evidenceTier: 'E1_public_reproduced'
       }
     }
@@ -392,7 +392,7 @@ describe('Private dataset provisioning', () => {
         ...basePaper,
         inputSchema: 'brainstem.resting-hrv-repeatability-cohort/v1',
         candidateManifestSha256:
-          '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463',
+          '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd',
         evidenceTier: 'E0_candidate'
       }
     }

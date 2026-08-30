@@ -389,7 +389,7 @@ export const C2DEnvironmentConfigSchema = z
               policy.paperInsight?.inputSchema ===
                 'brainstem.overnight-heart-rate-change-cohort/v1' &&
               policy.paperInsight.candidateManifestSha256 ===
-                '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754' &&
+                '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7' &&
               policy.paperInsight.referenceSha256 === null &&
               policy.paperInsight.evidenceTier === 'E1_public_reproduced' &&
               policy.participantValue === undefined
@@ -400,7 +400,7 @@ export const C2DEnvironmentConfigSchema = z
               policy.paperInsight?.inputSchema ===
                 'brainstem.resting-hrv-repeatability-cohort/v1' &&
               policy.paperInsight.candidateManifestSha256 ===
-                '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463' &&
+                '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd' &&
               policy.paperInsight.referenceSha256 === null &&
               policy.paperInsight.evidenceTier === 'E0_candidate' &&
               policy.participantValue === undefined
@@ -588,7 +588,7 @@ export const C2DEnvironmentConfigSchema = z
                   policy.resultProfile ===
                     'brainstem.overnight-heart-rate-change-personal/v1' &&
                   policy.candidateManifestSha256 ===
-                    '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754' &&
+                    '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7' &&
                   policy.approvedManifestSha256 !== null &&
                   policy.referenceSha256 === null &&
                   policy.evidenceTier === 'E1_public_reproduced'
@@ -603,7 +603,7 @@ export const C2DEnvironmentConfigSchema = z
                     policy.resultProfile ===
                       'brainstem.resting-hrv-repeatability-personal/v1' &&
                     policy.candidateManifestSha256 ===
-                      '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463' &&
+                      '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd' &&
                     policy.approvedManifestSha256 !== null &&
                     policy.referenceSha256 === null &&
                     policy.evidenceTier === 'E0_candidate'
