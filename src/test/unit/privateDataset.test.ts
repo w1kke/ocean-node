@@ -35,6 +35,7 @@ describe('Private dataset provisioning', () => {
   let receivedAuthorization: string
   let receivedReleaseId: string
   let receivedAnalysisId: string
+  let receivedAlgorithmVersion: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
@@ -47,6 +48,7 @@ describe('Private dataset provisioning', () => {
     receivedAuthorization = ''
     receivedReleaseId = ''
     receivedAnalysisId = ''
+    receivedAlgorithmVersion = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
@@ -55,6 +57,9 @@ describe('Private dataset provisioning', () => {
       receivedAuthorization = String(request.headers.authorization ?? '')
       receivedReleaseId = String(request.headers['x-brainstem-cohort-release-id'] ?? '')
       receivedAnalysisId = String(request.headers['x-brainstem-analysis-id'] ?? '')
+      receivedAlgorithmVersion = String(
+        request.headers['x-brainstem-algorithm-version'] ?? ''
+      )
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
         response.end()
@@ -68,7 +73,10 @@ describe('Private dataset provisioning', () => {
       const checksum = createHash('sha256').update(body).digest('hex')
       const headers: Record<string, string | number> = {
         'Content-Type': responseMode === 'wrong-type' ? 'text/plain' : 'application/json',
-        'X-Content-SHA256': responseMode === 'bad-checksum' ? '0'.repeat(64) : checksum
+        'X-Content-SHA256': responseMode === 'bad-checksum' ? '0'.repeat(64) : checksum,
+        ...(responseMode === 'no-sequence'
+          ? {}
+          : { 'X-Brainstem-Release-Sequence-SHA256': '9'.repeat(64) })
       }
       if (responseMode !== 'no-length') headers['Content-Length'] = body.length
       response.writeHead(200, headers)
@@ -158,6 +166,14 @@ describe('Private dataset provisioning', () => {
       'X-Brainstem-Analysis-Id': 'researcher-controlled'
     }
     await expectFailure('private_dataset_analysis_header_is_reserved')
+    expect(requestCount).to.equal(0)
+  })
+
+  it('rejects caller control of the algorithm version header before fetching', async () => {
+    file.headers = {
+      'X-Brainstem-Algorithm-Version': 'researcher-controlled'
+    }
+    await expectFailure('private_dataset_algorithm_version_header_is_reserved')
     expect(requestCount).to.equal(0)
   })
 
@@ -261,7 +277,12 @@ describe('Private dataset provisioning', () => {
 
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
     expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-methods/v1')
+    expect(receivedAlgorithmVersion).to.equal('0.1.0')
     rmSync(destination)
+
+    responseMode = 'no-sequence'
+    await expectFailure('private_dataset_release_sequence_invalid')
+    responseMode = 'valid'
 
     body = Buffer.from(
       JSON.stringify({

@@ -20,6 +20,7 @@ const SHA256 = /^[0-9a-f]{64}$/
 const JOB_HEADER = 'x-ocean-compute-job-id'
 const RELEASE_HEADER = 'x-brainstem-cohort-release-id'
 const ANALYSIS_HEADER = 'x-brainstem-analysis-id'
+const ALGORITHM_VERSION_HEADER = 'x-brainstem-algorithm-version'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
@@ -241,6 +242,11 @@ function requestHeaders(
     if (key.toLowerCase() === ANALYSIS_HEADER) {
       throw new PrivateDatasetError('private_dataset_analysis_header_is_reserved')
     }
+    if (key.toLowerCase() === ALGORITHM_VERSION_HEADER) {
+      throw new PrivateDatasetError(
+        'private_dataset_algorithm_version_header_is_reserved'
+      )
+    }
   }
   if (suppliedHeaders.length > 0) {
     throw new PrivateDatasetError('private_dataset_headers_not_allowed')
@@ -252,7 +258,10 @@ function requestHeaders(
     Authorization: `Bearer ${environment[policy.bearerTokenEnv]}`,
     'X-Ocean-Compute-Job-Id': jobId,
     'X-Brainstem-Cohort-Release-Id': policy.releaseId,
-    'X-Brainstem-Analysis-Id': policy.analysisId
+    'X-Brainstem-Analysis-Id': policy.analysisId,
+    ...(policy.paperInsight
+      ? { 'X-Brainstem-Algorithm-Version': policy.paperInsight.algorithmVersion }
+      : {})
   }
 }
 
@@ -555,7 +564,8 @@ export async function downloadPrivateDataset(
     destination,
     policy.maxBytes,
     requestHeaders(file, jobId, policy, environment),
-    privateDatasetHttpsAgent(policy)
+    privateDatasetHttpsAgent(policy),
+    Boolean(policy.paperInsight)
   )
   validateReviewedCohortInput(destination, policy)
   return result
@@ -566,7 +576,8 @@ export async function downloadVerifiedJson(
   destination: string,
   maxBytes: number,
   headers: Record<string, string>,
-  httpsAgent?: HttpsAgent
+  httpsAgent?: HttpsAgent,
+  requireReleaseSequence: boolean = false
 ): Promise<{ bytes: number; checksum: string }> {
   const partial = `${destination}.part`
   let responseStream: Readable | undefined
@@ -613,6 +624,13 @@ export async function downloadVerifiedJson(
       SHA256,
       'private_dataset_checksum_invalid'
     )
+    if (requireReleaseSequence) {
+      requiredHeader(
+        response.headers['x-brainstem-release-sequence-sha256'],
+        SHA256,
+        'private_dataset_release_sequence_invalid'
+      )
+    }
 
     let bytes = 0
     const hash = createHash('sha256')
