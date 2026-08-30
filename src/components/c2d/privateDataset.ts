@@ -30,6 +30,8 @@ const REST_REPEATABILITY_CANDIDATE_SHA256 =
   '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
 const STANDING_RESPONSE_CANDIDATE_SHA256 =
   'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
+const GUIDED_BREATHING_CANDIDATE_SHA256 =
+  'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
 type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
   Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
@@ -38,6 +40,19 @@ export class PrivateDatasetError extends Error {
     super(code)
     this.name = 'PrivateDatasetError'
   }
+}
+
+function isGuidedBreathingProtocol(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const protocol = value as Record<string, unknown>
+  return (
+    Object.keys(protocol).sort().join(',') === 'eh,ep,ih,ip,rateCPM' &&
+    protocol.rateCPM === 6 &&
+    protocol.ih === 5 &&
+    protocol.ip === 0 &&
+    protocol.eh === 5 &&
+    protocol.ep === 0
+  )
 }
 
 export function assertPrivateDatasetJob(
@@ -129,6 +144,20 @@ export function assertPrivateDatasetConfiguration(
         'brainstem.standing-heart-rate-response-cohort/v1' ||
       policy.paperInsight.candidateManifestSha256 !==
         STANDING_RESPONSE_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      policy.paperInsight.referenceSha256 !== null ||
+      policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.guided-breathing-response/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+      policy.paperInsight.inputSchema !==
+        'brainstem.guided-breathing-response-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !== GUIDED_BREATHING_CANDIDATE_SHA256 ||
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
       policy.paperInsight.referenceSha256 !== null ||
       policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
@@ -249,15 +278,19 @@ function validateReviewedCohortInput(
     const standing =
       policy.paperInsight.inputSchema ===
       'brainstem.standing-heart-rate-response-cohort/v1'
+    const guidedBreathing =
+      policy.paperInsight.inputSchema === 'brainstem.guided-breathing-response-cohort/v1'
     if (
       !dataset ||
       Array.isArray(dataset) ||
       Object.keys(dataset).sort().join(',') !==
-        (overnight || repeatability || standing
-          ? 'allowedUse,participants,policy,schema,sourceType'
-          : 'participants,schema') ||
+        (guidedBreathing
+          ? 'allowedUse,participants,policy,protocol,schema,sourceType'
+          : overnight || repeatability || standing
+            ? 'allowedUse,participants,policy,schema,sourceType'
+            : 'participants,schema') ||
       dataset.schema !== policy.paperInsight.inputSchema ||
-      ((overnight || repeatability || standing) &&
+      ((overnight || repeatability || standing || guidedBreathing) &&
         dataset.sourceType !== 'approved_real_cohort') ||
       (overnight &&
         (dataset.policy !==
@@ -269,6 +302,11 @@ function validateReviewedCohortInput(
       (standing &&
         (dataset.policy !== 'brainstem.standing-heart-rate-response-cohort/latest-7/v1' ||
           dataset.allowedUse !== 'aggregate_standing_response_only')) ||
+      (guidedBreathing &&
+        (dataset.policy !==
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1' ||
+          dataset.allowedUse !== 'aggregate_guided_breathing_response_only' ||
+          !isGuidedBreathingProtocol(dataset.protocol))) ||
       !Array.isArray(dataset.participants) ||
       dataset.participants.length > 1000
     ) {
@@ -290,7 +328,13 @@ function validateReviewedCohortInput(
         !Array.isArray(values) ||
         values.length < 1 ||
         values.length >
-          (overnight ? 9 : repeatability || standing ? 7 : sampleEntropy ? 1 : 16) ||
+          (overnight
+            ? 9
+            : repeatability || standing || guidedBreathing
+              ? 7
+              : sampleEntropy
+                ? 1
+                : 16) ||
         ((overnight || repeatability) && values.length !== (overnight ? 9 : 7))
       ) {
         throw new Error('invalid participant')
@@ -364,6 +408,50 @@ function validateReviewedCohortInput(
           ) {
             throw new Error('invalid recording')
           }
+        }
+        continue
+      }
+      if (guidedBreathing) {
+        const indices = new Set<number>()
+        for (const recording of values) {
+          const coverage = Array.isArray(recording?.rrIntervalsMs)
+            ? recording.rrIntervalsMs.reduce(
+                (total: number, value: number) => total + value,
+                0
+              ) /
+              1000 /
+              recording.durationSeconds
+            : Number.NaN
+          if (
+            !recording ||
+            Array.isArray(recording) ||
+            Object.keys(recording).sort().join(',') !==
+              'durationSeconds,protocol,recordingIndex,recordingType,rrIntervalsMs' ||
+            !Number.isInteger(recording.recordingIndex) ||
+            recording.recordingIndex < 1 ||
+            recording.recordingIndex > 7 ||
+            indices.has(recording.recordingIndex) ||
+            recording.recordingType !== 'exercise' ||
+            !Number.isInteger(recording.durationSeconds) ||
+            recording.durationSeconds < 120 ||
+            recording.durationSeconds > 1800 ||
+            !isGuidedBreathingProtocol(recording.protocol) ||
+            !Array.isArray(recording.rrIntervalsMs) ||
+            recording.rrIntervalsMs.length < 1 ||
+            recording.rrIntervalsMs.length > 6000 ||
+            recording.rrIntervalsMs.some(
+              (value: unknown) =>
+                typeof value !== 'number' ||
+                !Number.isFinite(value) ||
+                value < 300 ||
+                value > 2000
+            ) ||
+            coverage < 0.9 ||
+            coverage > 1.1
+          ) {
+            throw new Error('invalid recording')
+          }
+          indices.add(recording.recordingIndex)
         }
         continue
       }

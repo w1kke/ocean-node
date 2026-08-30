@@ -125,6 +125,7 @@ export interface PrivateDatasetPolicy {
     | 'brainstem.overnight-heart-rate-change/v1'
     | 'brainstem.resting-hrv-repeatability/v1'
     | 'brainstem.standing-heart-rate-response/v1'
+    | 'brainstem.guided-breathing-response/v1'
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
@@ -138,6 +139,7 @@ export interface PrivateDatasetPolicy {
       | 'brainstem.overnight-heart-rate-change-cohort/v1'
       | 'brainstem.resting-hrv-repeatability-cohort/v1'
       | 'brainstem.standing-heart-rate-response-cohort/v1'
+      | 'brainstem.guided-breathing-response-cohort/v1'
     candidateManifestSha256: string
     approvedManifestSha256: string
     referenceSha256: string | null
@@ -168,6 +170,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.overnight-heart-rate-change/v1'
     | 'brainstem.resting-hrv-repeatability/v1'
     | 'brainstem.standing-heart-rate-response/v1'
+    | 'brainstem.guided-breathing-response/v1'
   algorithmVersion: '1.0.0' | '0.1.0'
   crabUrl: string
   approvedAlgorithmImage: string
@@ -191,6 +194,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-overnight-heart-rate-change/v1'
     | 'brainstem.personal-resting-hrv-repeatability/v1'
     | 'brainstem.personal-standing-heart-rate-response/v1'
+    | 'brainstem.personal-guided-breathing-response/v1'
   inputPolicy:
     | 'brainstem.personal-resting-rr/latest-16/v1'
     | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
@@ -199,6 +203,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1'
     | 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1'
     | 'brainstem.personal-standing-heart-rate-response/latest-7/v1'
+    | 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1'
   resultContract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
   resultProfile:
     | 'brainstem.personal-resting-heart-overview/v1'
@@ -208,6 +213,7 @@ export interface PersonalInsightPolicy {
     | 'brainstem.overnight-heart-rate-change-personal/v1'
     | 'brainstem.resting-hrv-repeatability-personal/v1'
     | 'brainstem.standing-heart-rate-response-personal/v1'
+    | 'brainstem.guided-breathing-response-personal/v1'
   audience: 'brainstem-ocean-node'
   maximumRecordings: 4 | 7 | 9 | 16
   maxInputBytes: number

@@ -30,6 +30,10 @@ const STANDING_RESPONSE_CANDIDATE_SHA256 =
   'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
 const STANDING_RESPONSE_REFERENCE_SHA256 =
   'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979'
+const GUIDED_BREATHING_CANDIDATE_SHA256 =
+  'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
+const GUIDED_BREATHING_REFERENCE_SHA256 =
+  '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -211,6 +215,22 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       typeof policy.approvedManifestSha256 === 'string' &&
       SHA256.test(policy.approvedManifestSha256) &&
       policy.referenceSha256 === STANDING_RESPONSE_REFERENCE_SHA256 &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
+    )
+  }
+  if (policy.analysisId === 'brainstem.guided-breathing-response/v1') {
+    return (
+      policy.maximumRecordings === 7 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-guided-breathing-response/v1' &&
+      policy.inputPolicy ===
+        'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.guided-breathing-response-personal/v1' &&
+      policy.candidateManifestSha256 === GUIDED_BREATHING_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      policy.referenceSha256 === GUIDED_BREATHING_REFERENCE_SHA256 &&
       policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
     )
   }
@@ -901,6 +921,64 @@ const standingResponsePersonalInput = z
   })
   .strict()
 
+const guidedBreathingProtocol = z
+  .object({
+    rateCPM: z.literal(6),
+    ih: z.literal(5),
+    ip: z.literal(0),
+    eh: z.literal(5),
+    ep: z.literal(0)
+  })
+  .strict()
+
+const guidedBreathingPersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-guided-breathing-response/v1'),
+    policy: z.literal(
+      'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1'
+    ),
+    protocol: guidedBreathingProtocol,
+    recordings: z
+      .array(
+        z
+          .object({
+            recordingIndex: z.number().int().min(1).max(7),
+            recordingType: z.literal('exercise'),
+            durationSeconds: z.number().int().min(120).max(1800),
+            protocol: guidedBreathingProtocol,
+            rrIntervalsMs: z
+              .array(z.number().finite().min(300).max(2000))
+              .min(1)
+              .max(6000)
+          })
+          .strict()
+          .superRefine((recording, context) => {
+            const coverage =
+              recording.rrIntervalsMs.reduce((total, value) => total + value, 0) /
+              1000 /
+              recording.durationSeconds
+            if (coverage < 0.9 || coverage > 1.1) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'interval duration does not match durationSeconds'
+              })
+            }
+          })
+      )
+      .min(1)
+      .max(7)
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const indices = input.recordings.map((recording) => recording.recordingIndex)
+    if (new Set(indices).size !== indices.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'recording indices must be unique'
+      })
+    }
+  })
+
 export function validatePersonalInsightInput(
   bytes: Buffer,
   policy: PersonalInsightPolicy
@@ -922,9 +1000,11 @@ export function validatePersonalInsightInput(
             ? repeatabilityPersonalInput
             : policy.inputSchema === 'brainstem.personal-standing-heart-rate-response/v1'
               ? standingResponsePersonalInput
-              : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
-                ? sleepBaselinePersonalInput
-                : legacyPersonalInput
+              : policy.inputSchema === 'brainstem.personal-guided-breathing-response/v1'
+                ? guidedBreathingPersonalInput
+                : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
+                  ? sleepBaselinePersonalInput
+                  : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }

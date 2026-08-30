@@ -54,6 +54,7 @@ const SLEEP_BASELINE_ANALYSIS_ID = 'brainstem.sleep-baseline/v1'
 const OVERNIGHT_CHANGE_ANALYSIS_ID = 'brainstem.overnight-heart-rate-change/v1'
 const REST_REPEATABILITY_ANALYSIS_ID = 'brainstem.resting-hrv-repeatability/v1'
 const STANDING_RESPONSE_ANALYSIS_ID = 'brainstem.standing-heart-rate-response/v1'
+const GUIDED_BREATHING_ANALYSIS_ID = 'brainstem.guided-breathing-response/v1'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const METHODS_APPROVED_SHA256 = '1'.repeat(64)
@@ -71,6 +72,10 @@ const STANDING_RESPONSE_CANDIDATE_SHA256 =
   'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
 const STANDING_RESPONSE_REFERENCE_SHA256 =
   'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979'
+const GUIDED_BREATHING_CANDIDATE_SHA256 =
+  'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
+const GUIDED_BREATHING_REFERENCE_SHA256 =
+  '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
@@ -196,6 +201,23 @@ function standingResponsePolicy(crabUrl: string): PersonalInsightPolicy {
     inputPolicy: 'brainstem.personal-standing-heart-rate-response/latest-7/v1',
     resultContract: 'brainstem.insight-result/v1',
     resultProfile: 'brainstem.standing-heart-rate-response-personal/v1',
+    maximumRecordings: 7
+  }
+}
+
+function guidedBreathingPolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: GUIDED_BREATHING_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: GUIDED_BREATHING_CANDIDATE_SHA256,
+    approvedManifestSha256: '9'.repeat(64),
+    referenceSha256: GUIDED_BREATHING_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-guided-breathing-response/v1',
+    inputPolicy:
+      'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.guided-breathing-response-personal/v1',
     maximumRecordings: 7
   }
 }
@@ -420,6 +442,49 @@ function standingResponseResult(): any {
     datasetSchemaVersion: 'brainstem.personal-standing-heart-rate-response/v1',
     candidateManifestSha256: STANDING_RESPONSE_CANDIDATE_SHA256,
     referenceSha256: STANDING_RESPONSE_REFERENCE_SHA256
+  }
+  return value
+}
+
+function guidedBreathingInput(): any {
+  const protocol = { rateCPM: 6, ih: 5, ip: 0, eh: 5, ep: 0 }
+  return {
+    schema: 'brainstem.personal-guided-breathing-response/v1',
+    policy: 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1',
+    protocol,
+    recordings: [
+      {
+        recordingIndex: 1,
+        recordingType: 'exercise',
+        durationSeconds: 300,
+        protocol,
+        rrIntervalsMs: Array(300).fill(1000)
+      }
+    ]
+  }
+}
+
+function guidedBreathingResult(): any {
+  const value = methodsResult()
+  value.analysisId = GUIDED_BREATHING_ANALYSIS_ID
+  value.title = 'My guided-breathing response'
+  value.summary = 'Your response across compatible guided-breathing sessions.'
+  value.metrics = [{ label: 'Typical RMSSD', value: 12.4, unit: 'ms' }]
+  value.charts = [
+    {
+      type: 'line',
+      title: 'Beat-to-beat variation by compatible session',
+      x: { label: 'Session', values: [1] },
+      y: { label: 'Variation', unit: 'ms' },
+      series: [{ label: 'RMSSD', values: [12.4] }]
+    }
+  ]
+  value.table = null
+  value.provenance = {
+    ...value.provenance,
+    datasetSchemaVersion: 'brainstem.personal-guided-breathing-response/v1',
+    candidateManifestSha256: GUIDED_BREATHING_CANDIDATE_SHA256,
+    referenceSha256: GUIDED_BREATHING_REFERENCE_SHA256
   }
   return value
 }
@@ -825,6 +890,7 @@ describe('personal Insight boundary', () => {
     const overnight = overnightChangePolicy('https://crab.internal/')
     const repeatability = restRepeatabilityPolicy('https://crab.internal/')
     const standing = standingResponsePolicy('https://crab.internal/')
+    const guidedBreathing = guidedBreathingPolicy('https://crab.internal/')
 
     expect(() =>
       assertPersonalInsightConfiguration(overnight, environment)
@@ -833,6 +899,9 @@ describe('personal Insight boundary', () => {
       assertPersonalInsightConfiguration(repeatability, environment)
     ).not.to.throw()
     expect(() => assertPersonalInsightConfiguration(standing, environment)).not.to.throw()
+    expect(() =>
+      assertPersonalInsightConfiguration(guidedBreathing, environment)
+    ).not.to.throw()
     expect(() =>
       validatePersonalInsightInput(
         Buffer.from(JSON.stringify(overnightChangeInput())),
@@ -857,6 +926,18 @@ describe('personal Insight boundary', () => {
         standing
       )
     ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(guidedBreathingInput())),
+        guidedBreathing
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(guidedBreathingResult())),
+        guidedBreathing
+      )
+    ).not.to.throw()
 
     const wrongReference = standingResponsePolicy('https://crab.internal/')
     wrongReference.referenceSha256 = '9'.repeat(64)
@@ -867,6 +948,22 @@ describe('personal Insight boundary', () => {
     wrongRecording.recordings[0].recordingType = 'rest'
     expect(() =>
       validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongRecording)), standing)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const wrongProtocol = guidedBreathingInput()
+    wrongProtocol.recordings[0].protocol.rateCPM = 5
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(wrongProtocol)),
+        guidedBreathing
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const duplicateIndex = guidedBreathingInput()
+    duplicateIndex.recordings.push({ ...duplicateIndex.recordings[0] })
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(duplicateIndex)),
+        guidedBreathing
+      )
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
 
     const wrongOrder = overnightChangeInput()

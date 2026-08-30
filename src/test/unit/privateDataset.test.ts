@@ -474,6 +474,96 @@ describe('Private dataset provisioning', () => {
       })
     )
     await expectFailure('private_dataset_contract_invalid')
+
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.guided-breathing-response/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.guided-breathing-response-cohort/v1',
+        candidateManifestSha256:
+          'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d',
+        evidenceTier: 'E2_brainstem_compatible_exploratory'
+      }
+    }
+    const protocol = { rateCPM: 6, ih: 5, ip: 0, eh: 5, ep: 0 }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v1',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol,
+        participants: [
+          {
+            subjectId: '4'.repeat(64),
+            recordings: [
+              {
+                recordingIndex: 1,
+                recordingType: 'exercise',
+                durationSeconds: 300,
+                protocol,
+                rrIntervalsMs: Array(300).fill(1000)
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.guided-breathing-response/v1')
+    rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v1',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol,
+        participants: [
+          {
+            subjectId: '4'.repeat(64),
+            recordings: [
+              {
+                recordingIndex: 1,
+                recordingType: 'exercise',
+                durationSeconds: 300,
+                protocol: { ...protocol, rateCPM: 5 },
+                rrIntervalsMs: Array(300).fill(1000)
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v1',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol,
+        participants: [
+          {
+            subjectId: '4'.repeat(64),
+            recordings: [1, 2].map(() => ({
+              recordingIndex: 1,
+              recordingType: 'exercise',
+              durationSeconds: 300,
+              protocol,
+              rrIntervalsMs: Array(300).fill(1000)
+            }))
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
   })
 
   it('fails closed on unsafe mTLS identity and key material', () => {

@@ -219,6 +219,30 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: standingResponse
       }).success
     ).to.equal(true)
+    const guidedBreathing = {
+      ...reviewedMethods,
+      analysisId: 'brainstem.guided-breathing-response/v1',
+      paperInsight: {
+        ...reviewedMethods.paperInsight,
+        inputSchema: 'brainstem.guided-breathing-response-cohort/v1',
+        candidateManifestSha256:
+          'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d',
+        referenceSha256: null as null,
+        evidenceTier: 'E2_brainstem_compatible_exploratory'
+      }
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.insight-result/v1'
+        },
+        privateDataset: guidedBreathing
+      }).success
+    ).to.equal(true)
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,
