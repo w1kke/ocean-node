@@ -499,7 +499,7 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-resting-rr/v1',
           'brainstem.personal-resting-hrv-methods/v1',
           'brainstem.personal-resting-sample-entropy/v1',
-          'brainstem.personal-sleep-baseline/v1',
+          'brainstem.personal-sleep-baseline/v2',
           'brainstem.personal-overnight-heart-rate-change/v2',
           'brainstem.personal-resting-hrv-repeatability/v1',
           'brainstem.personal-standing-heart-rate-response/v1',
@@ -509,7 +509,7 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-resting-rr/latest-16/v1',
           'brainstem.personal-resting-hrv-methods/latest-16/v1',
           'brainstem.personal-resting-sample-entropy/latest-4/v1',
-          'brainstem.personal-sleep-baseline/latest-7/v1',
+          'brainstem.personal-sleep-baseline/latest-7/v2',
           'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2',
           'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1',
           'brainstem.personal-standing-heart-rate-response/latest-7/v1',
@@ -680,14 +680,14 @@ export const C2DEnvironmentConfigSchema = z
                           'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979' &&
                         policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
                       : policy.maximumRecordings === 7 &&
-                        policy.algorithmVersion === '0.1.0' &&
-                        policy.inputSchema === 'brainstem.personal-sleep-baseline/v1' &&
+                        policy.algorithmVersion === '0.2.0' &&
+                        policy.inputSchema === 'brainstem.personal-sleep-baseline/v2' &&
                         policy.inputPolicy ===
-                          'brainstem.personal-sleep-baseline/latest-7/v1' &&
+                          'brainstem.personal-sleep-baseline/latest-7/v2' &&
                         policy.resultContract === 'brainstem.insight-result/v1' &&
                         policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
                         policy.candidateManifestSha256 ===
-                          '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e' &&
+                          'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9' &&
                         policy.approvedManifestSha256 !== null &&
                         policy.referenceSha256 !== null
         if (!exactPolicy) {

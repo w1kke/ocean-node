@@ -21,7 +21,7 @@ const METHODS_CANDIDATE_SHA256 =
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
-  '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
+  'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
@@ -237,9 +237,9 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
   return (
     policy.maximumRecordings === 7 &&
     policy.analysisId === 'brainstem.sleep-baseline/v1' &&
-    policy.algorithmVersion === '0.1.0' &&
-    policy.inputSchema === 'brainstem.personal-sleep-baseline/v1' &&
-    policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-7/v1' &&
+    policy.algorithmVersion === '0.2.0' &&
+    policy.inputSchema === 'brainstem.personal-sleep-baseline/v2' &&
+    policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-7/v2' &&
     policy.resultContract === 'brainstem.insight-result/v1' &&
     policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
     policy.evidenceTier === 'E2_brainstem_compatible_exploratory' &&
@@ -823,8 +823,28 @@ const sleepRecording = z
 
 const sleepBaselinePersonalInput = z
   .object({
-    schema: z.literal('brainstem.personal-sleep-baseline/v1'),
-    policy: z.literal('brainstem.personal-sleep-baseline/latest-7/v1'),
+    schema: z.literal('brainstem.personal-sleep-baseline/v2'),
+    policy: z.literal('brainstem.personal-sleep-baseline/latest-7/v2'),
+    referenceProfile: z
+      .object({
+        schema: z.literal('brainstem.reference-profile/v1'),
+        referenceYear: z.literal(2026),
+        ageBand: z.enum(['under_30', '30_44', '45_59', '60_plus']).nullable(),
+        gender: z.enum(['female', 'male']).nullable(),
+        region: z
+          .enum([
+            'North America',
+            'Europe',
+            'South East Asia',
+            'East Asia',
+            'Middle East',
+            'South America',
+            'Central Asia',
+            'Other'
+          ])
+          .nullable()
+      })
+      .strict(),
     recordings: z.array(sleepRecording).min(1).max(7)
   })
   .strict()
@@ -1018,7 +1038,7 @@ export function validatePersonalInsightInput(
               ? standingResponsePersonalInput
               : policy.inputSchema === 'brainstem.personal-guided-breathing-response/v1'
                 ? guidedBreathingPersonalInput
-                : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
+                : policy.inputSchema === 'brainstem.personal-sleep-baseline/v2'
                   ? sleepBaselinePersonalInput
                   : legacyPersonalInput
   if (!input.safeParse(value).success) {
@@ -1055,6 +1075,18 @@ export function validatePersonalInsightResult(
         useClass: policy.useClass,
         clinicalUse: policy.clinicalUse
       })
+      if (policy.analysisId === 'brainstem.sleep-baseline/v1') {
+        const provenance = (value as any)?.provenance
+        if (
+          !SHA256.test(provenance?.referenceScopeSha256) ||
+          !['age_gender_region', 'age_gender', 'age', 'all'].includes(
+            provenance?.referenceScopeDimensions
+          ) ||
+          typeof provenance?.referenceScopeBroadened !== 'boolean'
+        ) {
+          throw new Error('sleep reference scope is invalid')
+        }
+      }
     } catch {
       throw new PersonalInsightError('personal_insight_result_invalid')
     }

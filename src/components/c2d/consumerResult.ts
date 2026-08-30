@@ -223,7 +223,15 @@ const insightResult = z
         referenceSha256: z
           .string()
           .regex(/^[0-9a-f]{64}$/)
-          .nullable()
+          .nullable(),
+        referenceScopeSha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional(),
+        referenceScopeDimensions: z
+          .enum(['age_gender_region', 'age_gender', 'age', 'all'])
+          .optional(),
+        referenceScopeBroadened: z.boolean().optional()
       })
       .strict()
   })

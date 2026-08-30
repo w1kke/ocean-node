@@ -63,7 +63,7 @@ const METHODS_REFERENCE_SHA256 =
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
-  '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
+  'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
@@ -141,12 +141,12 @@ function sleepBaselinePolicy(crabUrl: string): PersonalInsightPolicy {
   return {
     ...policy(crabUrl),
     analysisId: SLEEP_BASELINE_ANALYSIS_ID,
-    algorithmVersion: '0.1.0',
+    algorithmVersion: '0.2.0',
     candidateManifestSha256: SLEEP_BASELINE_CANDIDATE_SHA256,
     approvedManifestSha256: '4'.repeat(64),
     referenceSha256: '5'.repeat(64),
-    inputSchema: 'brainstem.personal-sleep-baseline/v1',
-    inputPolicy: 'brainstem.personal-sleep-baseline/latest-7/v1',
+    inputSchema: 'brainstem.personal-sleep-baseline/v2',
+    inputPolicy: 'brainstem.personal-sleep-baseline/latest-7/v2',
     resultContract: 'brainstem.insight-result/v1',
     resultProfile: 'brainstem.sleep-baseline-personal/v1',
     maximumRecordings: 7,
@@ -360,8 +360,15 @@ function sampleEntropyInput(): any {
 function sleepBaselineInput(): any {
   const rrIntervalsMs = Array(18000).fill(1000)
   return {
-    schema: 'brainstem.personal-sleep-baseline/v1',
-    policy: 'brainstem.personal-sleep-baseline/latest-7/v1',
+    schema: 'brainstem.personal-sleep-baseline/v2',
+    policy: 'brainstem.personal-sleep-baseline/latest-7/v2',
+    referenceProfile: {
+      schema: 'brainstem.reference-profile/v1',
+      referenceYear: 2026,
+      ageBand: '30_44',
+      gender: 'female',
+      region: 'Europe'
+    },
     recordings: [
       {
         recordingType: 'sleep',
@@ -380,6 +387,22 @@ function sleepBaselineInput(): any {
       }
     ]
   }
+}
+
+function sleepBaselineResult(): any {
+  const value = methodsResult()
+  value.analysisId = SLEEP_BASELINE_ANALYSIS_ID
+  value.provenance = {
+    ...value.provenance,
+    algorithmVersion: '0.2.0',
+    datasetSchemaVersion: 'brainstem.personal-sleep-baseline/v2',
+    candidateManifestSha256: SLEEP_BASELINE_CANDIDATE_SHA256,
+    referenceSha256: '5'.repeat(64),
+    referenceScopeSha256: '6'.repeat(64),
+    referenceScopeDimensions: 'age_gender',
+    referenceScopeBroadened: true
+  }
+  return value
 }
 
 function overnightChangeInput(): any {
@@ -882,6 +905,12 @@ describe('personal Insight boundary', () => {
         configured
       )
     ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(sleepBaselineResult())),
+        configured
+      )
+    ).not.to.throw()
 
     const mismatchedQuality = sleepBaselineInput()
     mismatchedQuality.recordings[0].quality.acceptedIntervalCount -= 1
@@ -891,6 +920,11 @@ describe('personal Insight boundary', () => {
         configured
       )
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const missingScope = sleepBaselineResult()
+    delete missingScope.provenance.referenceScopeSha256
+    expect(() =>
+      validatePersonalInsightResult(Buffer.from(JSON.stringify(missingScope)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
   })
 
   it('binds the expansion policies and their exact personal inputs', () => {
