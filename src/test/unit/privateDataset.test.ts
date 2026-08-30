@@ -338,6 +338,86 @@ describe('Private dataset provisioning', () => {
     await expectFailure('private_dataset_contract_invalid')
   })
 
+  it('accepts the exact expansion cohort contracts', async () => {
+    const basePaper = {
+      algorithmVersion: '0.1.0' as const,
+      approvedManifestSha256: 'd'.repeat(64),
+      referenceSha256: null as null,
+      useClass: 'methods_only' as const,
+      clinicalUse: 'prohibited' as const
+    }
+    policy = {
+      ...policy,
+      maxBytes: 256 * 1024,
+      analysisId: 'brainstem.overnight-heart-rate-change/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.overnight-heart-rate-change-cohort/v1',
+        candidateManifestSha256:
+          '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754',
+        evidenceTier: 'E1_public_reproduced'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.overnight-heart-rate-change-cohort/v1',
+        policy: 'brainstem.overnight-heart-rate-change-cohort/distinct-9/v1',
+        allowedUse: 'aggregate_overnight_change_only',
+        sourceType: 'approved_real_cohort',
+        participants: [
+          {
+            subjectId: '1'.repeat(64),
+            nights: Array.from({ length: 9 }, (_, index) => ({
+              nightIndex: index + 1,
+              durationSeconds: 18000,
+              observedIntervalCount: 18000,
+              acceptedIntervalCount: 18000,
+              intervalSumMs: 18000000,
+              durationCoverageRatio: 1,
+              normalToNormalProvenance: 'unverified',
+              officialMethodInputCompatible: false
+            }))
+          }
+        ]
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    rmSync(destination)
+
+    const intervals = Array(600).fill(500)
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.resting-hrv-repeatability/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.resting-hrv-repeatability-cohort/v1',
+        candidateManifestSha256:
+          '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463',
+        evidenceTier: 'E0_candidate'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-hrv-repeatability-cohort/v1',
+        policy: 'brainstem.resting-hrv-repeatability-cohort/distinct-7/v1',
+        allowedUse: 'aggregate_resting_repeatability_only',
+        sourceType: 'approved_real_cohort',
+        participants: [
+          {
+            subjectId: '2'.repeat(64),
+            recordings: Array.from({ length: 7 }, () => ({
+              recordingType: 'rest',
+              durationSeconds: 300,
+              rrIntervalsMs: intervals
+            }))
+          }
+        ]
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-repeatability/v1')
+  })
+
   it('fails closed on unsafe mTLS identity and key material', () => {
     const caFile = path.join(directory, 'ca.pem')
     const certificateFile = path.join(directory, 'client.pem')

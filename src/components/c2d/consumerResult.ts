@@ -190,6 +190,7 @@ const insightResult = z
     evidence: z
       .object({
         tier: z.enum([
+          'E0_candidate',
           'E1_public_reproduced',
           'E2_brainstem_compatible_exploratory',
           'E3_brainstem_validated_research'

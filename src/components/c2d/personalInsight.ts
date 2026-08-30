@@ -22,6 +22,10 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
+const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
+  '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754'
+const REST_REPEATABILITY_CANDIDATE_SHA256 =
+  '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -109,11 +113,7 @@ function isLocalProofHostname(hostname: string): boolean {
 }
 
 function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
-  if (
-    policy.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
-    policy.useClass !== 'methods_only' ||
-    policy.clinicalUse !== 'prohibited'
-  ) {
+  if (policy.useClass !== 'methods_only' || policy.clinicalUse !== 'prohibited') {
     return false
   }
   if (policy.analysisId === 'brainstem.personal-resting-heart-overview/v1') {
@@ -124,6 +124,7 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       policy.inputPolicy === 'brainstem.personal-resting-rr/latest-16/v1' &&
       policy.resultContract === 'brainstem.c2d-result/v1' &&
       policy.resultProfile === 'brainstem.personal-resting-heart-overview/v1' &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory' &&
       policy.candidateManifestSha256 === null &&
       policy.approvedManifestSha256 === null &&
       policy.referenceSha256 === null
@@ -137,6 +138,7 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       policy.inputPolicy === 'brainstem.personal-resting-hrv-methods/latest-16/v1' &&
       policy.resultContract === 'brainstem.insight-result/v1' &&
       policy.resultProfile === 'brainstem.resting-hrv-methods-personal/v1' &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory' &&
       policy.candidateManifestSha256 === METHODS_CANDIDATE_SHA256 &&
       typeof policy.approvedManifestSha256 === 'string' &&
       SHA256.test(policy.approvedManifestSha256) &&
@@ -152,11 +154,44 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       policy.inputPolicy === 'brainstem.personal-resting-sample-entropy/latest-4/v1' &&
       policy.resultContract === 'brainstem.insight-result/v1' &&
       policy.resultProfile === 'brainstem.resting-sample-entropy-personal/v1' &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory' &&
       policy.candidateManifestSha256 === SAMPLE_ENTROPY_CANDIDATE_SHA256 &&
       typeof policy.approvedManifestSha256 === 'string' &&
       SHA256.test(policy.approvedManifestSha256) &&
       typeof policy.referenceSha256 === 'string' &&
       SHA256.test(policy.referenceSha256)
+    )
+  }
+  if (policy.analysisId === 'brainstem.overnight-heart-rate-change/v1') {
+    return (
+      policy.maximumRecordings === 9 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-overnight-heart-rate-change/v1' &&
+      policy.inputPolicy ===
+        'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.overnight-heart-rate-change-personal/v1' &&
+      policy.candidateManifestSha256 === OVERNIGHT_CHANGE_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      policy.referenceSha256 === null &&
+      policy.evidenceTier === 'E1_public_reproduced'
+    )
+  }
+  if (policy.analysisId === 'brainstem.resting-hrv-repeatability/v1') {
+    return (
+      policy.maximumRecordings === 7 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-resting-hrv-repeatability/v1' &&
+      policy.inputPolicy ===
+        'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.resting-hrv-repeatability-personal/v1' &&
+      policy.candidateManifestSha256 === REST_REPEATABILITY_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      policy.referenceSha256 === null &&
+      policy.evidenceTier === 'E0_candidate'
     )
   }
   return (
@@ -167,6 +202,7 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
     policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-7/v1' &&
     policy.resultContract === 'brainstem.insight-result/v1' &&
     policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
+    policy.evidenceTier === 'E2_brainstem_compatible_exploratory' &&
     policy.candidateManifestSha256 === SLEEP_BASELINE_CANDIDATE_SHA256 &&
     typeof policy.approvedManifestSha256 === 'string' &&
     SHA256.test(policy.approvedManifestSha256) &&
@@ -753,6 +789,62 @@ const sleepBaselinePersonalInput = z
   })
   .strict()
 
+const overnightNight = z
+  .object({
+    nightIndex: z.number().int().min(1).max(9),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(5 * 60 * 60)
+      .max(12 * 60 * 60),
+    observedIntervalCount: z.number().int().min(9000).max(172800),
+    acceptedIntervalCount: z.number().int().min(9000).max(172800),
+    intervalSumMs: z.number().finite().positive(),
+    durationCoverageRatio: z.number().finite().min(0.9).max(1.1),
+    normalToNormalProvenance: z.literal('unverified'),
+    officialMethodInputCompatible: z.literal(false)
+  })
+  .strict()
+  .superRefine((night, context) => {
+    if (
+      night.acceptedIntervalCount > night.observedIntervalCount ||
+      night.acceptedIntervalCount / night.observedIntervalCount < 0.95 ||
+      Math.abs(
+        night.durationCoverageRatio - night.intervalSumMs / 1000 / night.durationSeconds
+      ) > 0.000001
+    ) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'night quality mismatch' })
+    }
+  })
+
+const overnightPersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-overnight-heart-rate-change/v1'),
+    policy: z.literal(
+      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1'
+    ),
+    nights: z.array(overnightNight).length(9)
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.nights.some((night, index) => night.nightIndex !== index + 1)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'night sequence mismatch'
+      })
+    }
+  })
+
+const repeatabilityPersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-resting-hrv-repeatability/v1'),
+    policy: z.literal(
+      'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1'
+    ),
+    recordings: z.array(methodsRecording).min(2).max(7)
+  })
+  .strict()
+
 export function validatePersonalInsightInput(
   bytes: Buffer,
   policy: PersonalInsightPolicy
@@ -768,9 +860,13 @@ export function validatePersonalInsightInput(
       ? methodsPersonalInput
       : policy.inputSchema === 'brainstem.personal-resting-sample-entropy/v1'
         ? sampleEntropyPersonalInput
-        : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
-          ? sleepBaselinePersonalInput
-          : legacyPersonalInput
+        : policy.inputSchema === 'brainstem.personal-overnight-heart-rate-change/v1'
+          ? overnightPersonalInput
+          : policy.inputSchema === 'brainstem.personal-resting-hrv-repeatability/v1'
+            ? repeatabilityPersonalInput
+            : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
+              ? sleepBaselinePersonalInput
+              : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }

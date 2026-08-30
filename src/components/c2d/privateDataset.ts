@@ -24,6 +24,10 @@ const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
+  '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754'
+const REST_REPEATABILITY_CANDIDATE_SHA256 =
+  '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463'
 type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
   Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
@@ -82,6 +86,35 @@ export function assertPrivateDatasetConfiguration(
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
       !SHA256.test(policy.paperInsight.referenceSha256) ||
       policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.overnight-heart-rate-change/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+      policy.paperInsight.inputSchema !==
+        'brainstem.overnight-heart-rate-change-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !== OVERNIGHT_CHANGE_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      policy.paperInsight.referenceSha256 !== null ||
+      policy.paperInsight.evidenceTier !== 'E1_public_reproduced' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.resting-hrv-repeatability/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+      policy.paperInsight.inputSchema !==
+        'brainstem.resting-hrv-repeatability-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !==
+        REST_REPEATABILITY_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      policy.paperInsight.referenceSha256 !== null ||
+      policy.paperInsight.evidenceTier !== 'E0_candidate' ||
       policy.paperInsight.useClass !== 'methods_only' ||
       policy.paperInsight.clinicalUse !== 'prohibited')
   ) {
@@ -191,11 +224,27 @@ function validateReviewedCohortInput(
     const dataset = JSON.parse(
       new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(destination))
     )
+    const overnight =
+      policy.paperInsight.inputSchema ===
+      'brainstem.overnight-heart-rate-change-cohort/v1'
+    const repeatability =
+      policy.paperInsight.inputSchema === 'brainstem.resting-hrv-repeatability-cohort/v1'
     if (
       !dataset ||
       Array.isArray(dataset) ||
-      Object.keys(dataset).sort().join(',') !== 'participants,schema' ||
+      Object.keys(dataset).sort().join(',') !==
+        (overnight || repeatability
+          ? 'allowedUse,participants,policy,schema,sourceType'
+          : 'participants,schema') ||
       dataset.schema !== policy.paperInsight.inputSchema ||
+      ((overnight || repeatability) && dataset.sourceType !== 'approved_real_cohort') ||
+      (overnight &&
+        (dataset.policy !==
+          'brainstem.overnight-heart-rate-change-cohort/distinct-9/v1' ||
+          dataset.allowedUse !== 'aggregate_overnight_change_only')) ||
+      (repeatability &&
+        (dataset.policy !== 'brainstem.resting-hrv-repeatability-cohort/distinct-7/v1' ||
+          dataset.allowedUse !== 'aggregate_resting_repeatability_only')) ||
       !Array.isArray(dataset.participants) ||
       dataset.participants.length > 1000
     ) {
@@ -205,21 +254,59 @@ function validateReviewedCohortInput(
     const sampleEntropy =
       policy.paperInsight.inputSchema === 'brainstem.resting-sample-entropy-cohort/v1'
     for (const participant of dataset.participants) {
+      const values = overnight ? participant?.nights : participant?.recordings
       if (
         !participant ||
         Array.isArray(participant) ||
-        Object.keys(participant).sort().join(',') !== 'recordings,subjectId' ||
+        Object.keys(participant).sort().join(',') !==
+          (overnight ? 'nights,subjectId' : 'recordings,subjectId') ||
         typeof participant.subjectId !== 'string' ||
         !SHA256.test(participant.subjectId) ||
         subjects.has(participant.subjectId) ||
-        !Array.isArray(participant.recordings) ||
-        participant.recordings.length < 1 ||
-        participant.recordings.length > (sampleEntropy ? 1 : 16)
+        !Array.isArray(values) ||
+        values.length < 1 ||
+        values.length > (overnight ? 9 : repeatability ? 7 : sampleEntropy ? 1 : 16) ||
+        ((overnight || repeatability) && values.length !== (overnight ? 9 : 7))
       ) {
         throw new Error('invalid participant')
       }
       subjects.add(participant.subjectId)
-      for (const recording of participant.recordings) {
+      if (overnight) {
+        for (let index = 0; index < values.length; index += 1) {
+          const night = values[index]
+          if (
+            !night ||
+            Array.isArray(night) ||
+            Object.keys(night).sort().join(',') !==
+              'acceptedIntervalCount,durationCoverageRatio,durationSeconds,intervalSumMs,nightIndex,normalToNormalProvenance,observedIntervalCount,officialMethodInputCompatible' ||
+            night.nightIndex !== index + 1 ||
+            !Number.isInteger(night.durationSeconds) ||
+            night.durationSeconds < 18_000 ||
+            night.durationSeconds > 43_200 ||
+            !Number.isInteger(night.observedIntervalCount) ||
+            !Number.isInteger(night.acceptedIntervalCount) ||
+            night.acceptedIntervalCount < 9_000 ||
+            night.acceptedIntervalCount > night.observedIntervalCount ||
+            night.acceptedIntervalCount / night.observedIntervalCount < 0.95 ||
+            typeof night.intervalSumMs !== 'number' ||
+            !Number.isFinite(night.intervalSumMs) ||
+            typeof night.durationCoverageRatio !== 'number' ||
+            !Number.isFinite(night.durationCoverageRatio) ||
+            night.durationCoverageRatio < 0.9 ||
+            night.durationCoverageRatio > 1.1 ||
+            Math.abs(
+              night.durationCoverageRatio -
+                night.intervalSumMs / 1000 / night.durationSeconds
+            ) > 0.000001 ||
+            night.normalToNormalProvenance !== 'unverified' ||
+            night.officialMethodInputCompatible !== false
+          ) {
+            throw new Error('invalid night')
+          }
+        }
+        continue
+      }
+      for (const recording of values) {
         if (
           !recording ||
           Array.isArray(recording) ||

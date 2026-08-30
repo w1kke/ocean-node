@@ -17,6 +17,7 @@ import os from 'os'
 import path from 'path'
 import type { DBComputeJob, PersonalInsightPolicy } from '../../@types/C2D/C2D.js'
 import {
+  assertPersonalInsightConfiguration,
   claimPersonalInsightGrant,
   completePersonalInsightRun,
   consumePersonalInsightCapability,
@@ -50,6 +51,8 @@ const ANALYSIS_ID = 'brainstem.personal-resting-heart-overview/v1'
 const METHODS_ANALYSIS_ID = 'brainstem.resting-hrv-methods/v1'
 const SAMPLE_ENTROPY_ANALYSIS_ID = 'brainstem.resting-rr-sample-entropy/v1'
 const SLEEP_BASELINE_ANALYSIS_ID = 'brainstem.sleep-baseline/v1'
+const OVERNIGHT_CHANGE_ANALYSIS_ID = 'brainstem.overnight-heart-rate-change/v1'
+const REST_REPEATABILITY_ANALYSIS_ID = 'brainstem.resting-hrv-repeatability/v1'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const METHODS_APPROVED_SHA256 = '1'.repeat(64)
@@ -59,6 +62,10 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e'
+const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
+  '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754'
+const REST_REPEATABILITY_CANDIDATE_SHA256 =
+  '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
@@ -134,6 +141,41 @@ function sleepBaselinePolicy(crabUrl: string): PersonalInsightPolicy {
     resultProfile: 'brainstem.sleep-baseline-personal/v1',
     maximumRecordings: 7,
     maxInputBytes: 8 * 1024 * 1024
+  }
+}
+
+function overnightChangePolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: OVERNIGHT_CHANGE_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: OVERNIGHT_CHANGE_CANDIDATE_SHA256,
+    approvedManifestSha256: '6'.repeat(64),
+    referenceSha256: null,
+    evidenceTier: 'E1_public_reproduced',
+    inputSchema: 'brainstem.personal-overnight-heart-rate-change/v1',
+    inputPolicy: 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.overnight-heart-rate-change-personal/v1',
+    maximumRecordings: 9,
+    maxInputBytes: 8 * 1024 * 1024
+  }
+}
+
+function restRepeatabilityPolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: REST_REPEATABILITY_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: REST_REPEATABILITY_CANDIDATE_SHA256,
+    approvedManifestSha256: '7'.repeat(64),
+    referenceSha256: null,
+    evidenceTier: 'E0_candidate',
+    inputSchema: 'brainstem.personal-resting-hrv-repeatability/v1',
+    inputPolicy: 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.resting-hrv-repeatability-personal/v1',
+    maximumRecordings: 7
   }
 }
 
@@ -293,6 +335,32 @@ function sleepBaselineInput(): any {
         rrIntervalsMs
       }
     ]
+  }
+}
+
+function overnightChangeInput(): any {
+  return {
+    schema: 'brainstem.personal-overnight-heart-rate-change/v1',
+    policy: 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1',
+    nights: Array.from({ length: 9 }, (_, index) => ({
+      nightIndex: index + 1,
+      durationSeconds: 18000,
+      observedIntervalCount: 18000,
+      acceptedIntervalCount: 18000,
+      intervalSumMs: 18000000,
+      durationCoverageRatio: 1,
+      normalToNormalProvenance: 'unverified',
+      officialMethodInputCompatible: false
+    }))
+  }
+}
+
+function restRepeatabilityInput(): any {
+  const recording = methodsInput().recordings[0]
+  return {
+    schema: 'brainstem.personal-resting-hrv-repeatability/v1',
+    policy: 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1',
+    recordings: [recording, { ...recording, rrIntervalsMs: [...recording.rrIntervalsMs] }]
   }
 }
 
@@ -686,6 +754,40 @@ describe('personal Insight boundary', () => {
         Buffer.from(JSON.stringify(mismatchedQuality)),
         configured
       )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+  })
+
+  it('binds the two expansion policies and their exact personal inputs', () => {
+    const environment = {
+      PERSONAL_INSIGHT_TEST_TOKEN: 'generated-personal-test-token-long-enough',
+      PERSONAL_INSIGHT_BFF_TEST_TOKEN: BFF_TOKEN
+    }
+    const overnight = overnightChangePolicy('https://crab.internal/')
+    const repeatability = restRepeatabilityPolicy('https://crab.internal/')
+
+    expect(() =>
+      assertPersonalInsightConfiguration(overnight, environment)
+    ).not.to.throw()
+    expect(() =>
+      assertPersonalInsightConfiguration(repeatability, environment)
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(overnightChangeInput())),
+        overnight
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(restRepeatabilityInput())),
+        repeatability
+      )
+    ).not.to.throw()
+
+    const wrongOrder = overnightChangeInput()
+    wrongOrder.nights[8].nightIndex = 8
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongOrder)), overnight)
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
   })
 

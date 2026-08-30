@@ -295,7 +295,9 @@ export const C2DEnvironmentConfigSchema = z
         analysisId: z.enum([
           'brainstem.resting-rr-cohort-summary/v1',
           'brainstem.resting-hrv-methods/v1',
-          'brainstem.resting-rr-sample-entropy/v1'
+          'brainstem.resting-rr-sample-entropy/v1',
+          'brainstem.overnight-heart-rate-change/v1',
+          'brainstem.resting-hrv-repeatability/v1'
         ]),
         url: z
           .string()
@@ -319,12 +321,21 @@ export const C2DEnvironmentConfigSchema = z
             algorithmVersion: z.literal('0.1.0'),
             inputSchema: z.enum([
               'brainstem.resting-hrv-methods-cohort/v1',
-              'brainstem.resting-sample-entropy-cohort/v1'
+              'brainstem.resting-sample-entropy-cohort/v1',
+              'brainstem.overnight-heart-rate-change-cohort/v1',
+              'brainstem.resting-hrv-repeatability-cohort/v1'
             ]),
             candidateManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
             approvedManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
-            referenceSha256: z.string().regex(/^[0-9a-f]{64}$/),
-            evidenceTier: z.literal('E2_brainstem_compatible_exploratory'),
+            referenceSha256: z
+              .string()
+              .regex(/^[0-9a-f]{64}$/)
+              .nullable(),
+            evidenceTier: z.enum([
+              'E0_candidate',
+              'E1_public_reproduced',
+              'E2_brainstem_compatible_exploratory'
+            ]),
             useClass: z.literal('methods_only'),
             clinicalUse: z.literal('prohibited')
           })
@@ -373,6 +384,28 @@ export const C2DEnvironmentConfigSchema = z
               policy.participantValue === undefined
             )
           }
+          if (policy.analysisId === 'brainstem.overnight-heart-rate-change/v1') {
+            return (
+              policy.paperInsight?.inputSchema ===
+                'brainstem.overnight-heart-rate-change-cohort/v1' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754' &&
+              policy.paperInsight.referenceSha256 === null &&
+              policy.paperInsight.evidenceTier === 'E1_public_reproduced' &&
+              policy.participantValue === undefined
+            )
+          }
+          if (policy.analysisId === 'brainstem.resting-hrv-repeatability/v1') {
+            return (
+              policy.paperInsight?.inputSchema ===
+                'brainstem.resting-hrv-repeatability-cohort/v1' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463' &&
+              policy.paperInsight.referenceSha256 === null &&
+              policy.paperInsight.evidenceTier === 'E0_candidate' &&
+              policy.participantValue === undefined
+            )
+          }
           return policy.paperInsight === undefined
         },
         {
@@ -386,7 +419,9 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-resting-heart-overview/v1',
           'brainstem.resting-hrv-methods/v1',
           'brainstem.resting-rr-sample-entropy/v1',
-          'brainstem.sleep-baseline/v1'
+          'brainstem.sleep-baseline/v1',
+          'brainstem.overnight-heart-rate-change/v1',
+          'brainstem.resting-hrv-repeatability/v1'
         ]),
         algorithmVersion: z.enum(['1.0.0', '0.1.0']),
         crabUrl: z
@@ -417,7 +452,11 @@ export const C2DEnvironmentConfigSchema = z
           .string()
           .regex(/^[0-9a-f]{64}$/)
           .nullable(),
-        evidenceTier: z.literal('E2_brainstem_compatible_exploratory'),
+        evidenceTier: z.enum([
+          'E0_candidate',
+          'E1_public_reproduced',
+          'E2_brainstem_compatible_exploratory'
+        ]),
         useClass: z.literal('methods_only'),
         clinicalUse: z.literal('prohibited'),
         bearerTokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/),
@@ -429,13 +468,17 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-resting-rr/v1',
           'brainstem.personal-resting-hrv-methods/v1',
           'brainstem.personal-resting-sample-entropy/v1',
-          'brainstem.personal-sleep-baseline/v1'
+          'brainstem.personal-sleep-baseline/v1',
+          'brainstem.personal-overnight-heart-rate-change/v1',
+          'brainstem.personal-resting-hrv-repeatability/v1'
         ]),
         inputPolicy: z.enum([
           'brainstem.personal-resting-rr/latest-16/v1',
           'brainstem.personal-resting-hrv-methods/latest-16/v1',
           'brainstem.personal-resting-sample-entropy/latest-4/v1',
-          'brainstem.personal-sleep-baseline/latest-7/v1'
+          'brainstem.personal-sleep-baseline/latest-7/v1',
+          'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1',
+          'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1'
         ]),
         resultContract: z.enum([
           'brainstem.c2d-result/v1',
@@ -445,10 +488,17 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-resting-heart-overview/v1',
           'brainstem.resting-hrv-methods-personal/v1',
           'brainstem.resting-sample-entropy-personal/v1',
-          'brainstem.sleep-baseline-personal/v1'
+          'brainstem.sleep-baseline-personal/v1',
+          'brainstem.overnight-heart-rate-change-personal/v1',
+          'brainstem.resting-hrv-repeatability-personal/v1'
         ]),
         audience: z.literal('brainstem-ocean-node'),
-        maximumRecordings: z.union([z.literal(4), z.literal(7), z.literal(16)]),
+        maximumRecordings: z.union([
+          z.literal(4),
+          z.literal(7),
+          z.literal(9),
+          z.literal(16)
+        ]),
         maxInputBytes: z
           .number()
           .int()
@@ -491,6 +541,9 @@ export const C2DEnvironmentConfigSchema = z
         const methods = policy.analysisId === 'brainstem.resting-hrv-methods/v1'
         const sampleEntropy =
           policy.analysisId === 'brainstem.resting-rr-sample-entropy/v1'
+        const overnight = policy.analysisId === 'brainstem.overnight-heart-rate-change/v1'
+        const repeatability =
+          policy.analysisId === 'brainstem.resting-hrv-repeatability/v1'
         const exactPolicy = legacy
           ? policy.maximumRecordings === 16 &&
             policy.algorithmVersion === '1.0.0' &&
@@ -524,16 +577,47 @@ export const C2DEnvironmentConfigSchema = z
                   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
                 policy.approvedManifestSha256 !== null &&
                 policy.referenceSha256 !== null
-              : policy.maximumRecordings === 7 &&
-                policy.algorithmVersion === '0.1.0' &&
-                policy.inputSchema === 'brainstem.personal-sleep-baseline/v1' &&
-                policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-7/v1' &&
-                policy.resultContract === 'brainstem.insight-result/v1' &&
-                policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
-                policy.candidateManifestSha256 ===
-                  '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e' &&
-                policy.approvedManifestSha256 !== null &&
-                policy.referenceSha256 !== null
+              : overnight
+                ? policy.maximumRecordings === 9 &&
+                  policy.algorithmVersion === '0.1.0' &&
+                  policy.inputSchema ===
+                    'brainstem.personal-overnight-heart-rate-change/v1' &&
+                  policy.inputPolicy ===
+                    'brainstem.personal-overnight-heart-rate-change/latest-distinct-9/v1' &&
+                  policy.resultContract === 'brainstem.insight-result/v1' &&
+                  policy.resultProfile ===
+                    'brainstem.overnight-heart-rate-change-personal/v1' &&
+                  policy.candidateManifestSha256 ===
+                    '2feadc0f74707fafdb7fec124b6cbaa7b38da5dd9cf747b45ca0530e35532754' &&
+                  policy.approvedManifestSha256 !== null &&
+                  policy.referenceSha256 === null &&
+                  policy.evidenceTier === 'E1_public_reproduced'
+                : repeatability
+                  ? policy.maximumRecordings === 7 &&
+                    policy.algorithmVersion === '0.1.0' &&
+                    policy.inputSchema ===
+                      'brainstem.personal-resting-hrv-repeatability/v1' &&
+                    policy.inputPolicy ===
+                      'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1' &&
+                    policy.resultContract === 'brainstem.insight-result/v1' &&
+                    policy.resultProfile ===
+                      'brainstem.resting-hrv-repeatability-personal/v1' &&
+                    policy.candidateManifestSha256 ===
+                      '1877f2e2280e4d52660184de5fb0370f127ec989082b1f9cc16922d0f14f6463' &&
+                    policy.approvedManifestSha256 !== null &&
+                    policy.referenceSha256 === null &&
+                    policy.evidenceTier === 'E0_candidate'
+                  : policy.maximumRecordings === 7 &&
+                    policy.algorithmVersion === '0.1.0' &&
+                    policy.inputSchema === 'brainstem.personal-sleep-baseline/v1' &&
+                    policy.inputPolicy ===
+                      'brainstem.personal-sleep-baseline/latest-7/v1' &&
+                    policy.resultContract === 'brainstem.insight-result/v1' &&
+                    policy.resultProfile === 'brainstem.sleep-baseline-personal/v1' &&
+                    policy.candidateManifestSha256 ===
+                      '4c24414518539dd6ff2c1a166e6d588f01e3a3fa9572111fb15b6729c7c7300e' &&
+                    policy.approvedManifestSha256 !== null &&
+                    policy.referenceSha256 !== null
         if (!exactPolicy) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
