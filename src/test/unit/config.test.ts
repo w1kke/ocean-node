@@ -195,6 +195,30 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: sampleEntropy
       }).success
     ).to.equal(true)
+    const standingResponse = {
+      ...reviewedMethods,
+      analysisId: 'brainstem.standing-heart-rate-response/v1',
+      paperInsight: {
+        ...reviewedMethods.paperInsight,
+        inputSchema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        candidateManifestSha256:
+          'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217',
+        referenceSha256: null as null,
+        evidenceTier: 'E2_brainstem_compatible_exploratory'
+      }
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.insight-result/v1'
+        },
+        privateDataset: standingResponse
+      }).success
+    ).to.equal(true)
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,

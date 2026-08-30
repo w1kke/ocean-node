@@ -26,6 +26,10 @@ const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
   '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
+const STANDING_RESPONSE_CANDIDATE_SHA256 =
+  'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
+const STANDING_RESPONSE_REFERENCE_SHA256 =
+  'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -192,6 +196,22 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       SHA256.test(policy.approvedManifestSha256) &&
       policy.referenceSha256 === null &&
       policy.evidenceTier === 'E0_candidate'
+    )
+  }
+  if (policy.analysisId === 'brainstem.standing-heart-rate-response/v1') {
+    return (
+      policy.maximumRecordings === 7 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-standing-heart-rate-response/v1' &&
+      policy.inputPolicy ===
+        'brainstem.personal-standing-heart-rate-response/latest-7/v1' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.standing-heart-rate-response-personal/v1' &&
+      policy.candidateManifestSha256 === STANDING_RESPONSE_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      policy.referenceSha256 === STANDING_RESPONSE_REFERENCE_SHA256 &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
     )
   }
   return (
@@ -845,6 +865,42 @@ const repeatabilityPersonalInput = z
   })
   .strict()
 
+const standingResponsePersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-standing-heart-rate-response/v1'),
+    policy: z.literal('brainstem.personal-standing-heart-rate-response/latest-7/v1'),
+    recordings: z
+      .array(
+        z
+          .object({
+            recordingType: z.literal('posture'),
+            durationSeconds: z.number().int().min(295).max(305),
+            rrIntervalsMs: z
+              .array(z.number().finite().min(300).max(2000))
+              .min(148)
+              .max(1100)
+          })
+          .strict()
+          .superRefine((recording, context) => {
+            const representedSeconds =
+              recording.rrIntervalsMs.reduce((total, value) => total + value, 0) / 1000
+            if (
+              representedSeconds < 295 ||
+              representedSeconds > 305 ||
+              Math.abs(representedSeconds - recording.durationSeconds) > 5
+            ) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'interval duration does not match durationSeconds'
+              })
+            }
+          })
+      )
+      .min(1)
+      .max(7)
+  })
+  .strict()
+
 export function validatePersonalInsightInput(
   bytes: Buffer,
   policy: PersonalInsightPolicy
@@ -864,9 +920,11 @@ export function validatePersonalInsightInput(
           ? overnightPersonalInput
           : policy.inputSchema === 'brainstem.personal-resting-hrv-repeatability/v1'
             ? repeatabilityPersonalInput
-            : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
-              ? sleepBaselinePersonalInput
-              : legacyPersonalInput
+            : policy.inputSchema === 'brainstem.personal-standing-heart-rate-response/v1'
+              ? standingResponsePersonalInput
+              : policy.inputSchema === 'brainstem.personal-sleep-baseline/v1'
+                ? sleepBaselinePersonalInput
+                : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }

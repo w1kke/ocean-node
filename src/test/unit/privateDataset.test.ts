@@ -416,6 +416,64 @@ describe('Private dataset provisioning', () => {
     )
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
     expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-repeatability/v1')
+    rmSync(destination)
+
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.standing-heart-rate-response/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        candidateManifestSha256:
+          'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217',
+        evidenceTier: 'E2_brainstem_compatible_exploratory'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        policy: 'brainstem.standing-heart-rate-response-cohort/latest-7/v1',
+        allowedUse: 'aggregate_standing_response_only',
+        sourceType: 'approved_real_cohort',
+        participants: [
+          {
+            subjectId: '3'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'posture',
+                durationSeconds: 300,
+                rrIntervalsMs: Array(600).fill(500)
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.standing-heart-rate-response/v1')
+    rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        policy: 'brainstem.standing-heart-rate-response-cohort/latest-7/v1',
+        allowedUse: 'aggregate_standing_response_only',
+        sourceType: 'approved_real_cohort',
+        participants: [
+          {
+            subjectId: '3'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'rest',
+                durationSeconds: 300,
+                rrIntervalsMs: Array(600).fill(500)
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
   })
 
   it('fails closed on unsafe mTLS identity and key material', () => {

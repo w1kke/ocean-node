@@ -28,6 +28,8 @@ const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '11accac777e72b9ee566531f174658d47fc211992223b5285f97fb7c003088f7'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
   '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
+const STANDING_RESPONSE_CANDIDATE_SHA256 =
+  'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
 type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
   Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
@@ -115,6 +117,21 @@ export function assertPrivateDatasetConfiguration(
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
       policy.paperInsight.referenceSha256 !== null ||
       policy.paperInsight.evidenceTier !== 'E0_candidate' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.standing-heart-rate-response/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.1.0' ||
+      policy.paperInsight.inputSchema !==
+        'brainstem.standing-heart-rate-response-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !==
+        STANDING_RESPONSE_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      policy.paperInsight.referenceSha256 !== null ||
+      policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
       policy.paperInsight.useClass !== 'methods_only' ||
       policy.paperInsight.clinicalUse !== 'prohibited')
   ) {
@@ -229,15 +246,19 @@ function validateReviewedCohortInput(
       'brainstem.overnight-heart-rate-change-cohort/v1'
     const repeatability =
       policy.paperInsight.inputSchema === 'brainstem.resting-hrv-repeatability-cohort/v1'
+    const standing =
+      policy.paperInsight.inputSchema ===
+      'brainstem.standing-heart-rate-response-cohort/v1'
     if (
       !dataset ||
       Array.isArray(dataset) ||
       Object.keys(dataset).sort().join(',') !==
-        (overnight || repeatability
+        (overnight || repeatability || standing
           ? 'allowedUse,participants,policy,schema,sourceType'
           : 'participants,schema') ||
       dataset.schema !== policy.paperInsight.inputSchema ||
-      ((overnight || repeatability) && dataset.sourceType !== 'approved_real_cohort') ||
+      ((overnight || repeatability || standing) &&
+        dataset.sourceType !== 'approved_real_cohort') ||
       (overnight &&
         (dataset.policy !==
           'brainstem.overnight-heart-rate-change-cohort/distinct-9/v1' ||
@@ -245,6 +266,9 @@ function validateReviewedCohortInput(
       (repeatability &&
         (dataset.policy !== 'brainstem.resting-hrv-repeatability-cohort/distinct-7/v1' ||
           dataset.allowedUse !== 'aggregate_resting_repeatability_only')) ||
+      (standing &&
+        (dataset.policy !== 'brainstem.standing-heart-rate-response-cohort/latest-7/v1' ||
+          dataset.allowedUse !== 'aggregate_standing_response_only')) ||
       !Array.isArray(dataset.participants) ||
       dataset.participants.length > 1000
     ) {
@@ -265,7 +289,8 @@ function validateReviewedCohortInput(
         subjects.has(participant.subjectId) ||
         !Array.isArray(values) ||
         values.length < 1 ||
-        values.length > (overnight ? 9 : repeatability ? 7 : sampleEntropy ? 1 : 16) ||
+        values.length >
+          (overnight ? 9 : repeatability || standing ? 7 : sampleEntropy ? 1 : 16) ||
         ((overnight || repeatability) && values.length !== (overnight ? 9 : 7))
       ) {
         throw new Error('invalid participant')
@@ -302,6 +327,42 @@ function validateReviewedCohortInput(
             night.officialMethodInputCompatible !== false
           ) {
             throw new Error('invalid night')
+          }
+        }
+        continue
+      }
+      if (standing) {
+        for (const recording of values) {
+          const representedSeconds = Array.isArray(recording?.rrIntervalsMs)
+            ? recording.rrIntervalsMs.reduce(
+                (total: number, value: number) => total + value,
+                0
+              ) / 1000
+            : Number.NaN
+          if (
+            !recording ||
+            Array.isArray(recording) ||
+            Object.keys(recording).sort().join(',') !==
+              'durationSeconds,recordingType,rrIntervalsMs' ||
+            recording.recordingType !== 'posture' ||
+            !Number.isInteger(recording.durationSeconds) ||
+            recording.durationSeconds < 295 ||
+            recording.durationSeconds > 305 ||
+            !Array.isArray(recording.rrIntervalsMs) ||
+            recording.rrIntervalsMs.length < 148 ||
+            recording.rrIntervalsMs.length > 1100 ||
+            recording.rrIntervalsMs.some(
+              (value: unknown) =>
+                typeof value !== 'number' ||
+                !Number.isFinite(value) ||
+                value < 300 ||
+                value > 2000
+            ) ||
+            representedSeconds < 295 ||
+            representedSeconds > 305 ||
+            Math.abs(representedSeconds - recording.durationSeconds) > 5
+          ) {
+            throw new Error('invalid recording')
           }
         }
         continue
