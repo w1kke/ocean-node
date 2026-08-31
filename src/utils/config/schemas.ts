@@ -692,7 +692,7 @@ export const C2DEnvironmentConfigSchema = z
                         policy.resultContract === 'brainstem.insight-result/v1' &&
                         policy.resultProfile === 'brainstem.sleep-baseline-personal/v2' &&
                         policy.candidateManifestSha256 ===
-                          'b7fb1cd6d31f76f393044604933a45d762d6ee56dfc197c50c498aad3594a7fd' &&
+                          '81ebd09121c902835a37c3100ea301c85775614e68230135b21b0c6fa43b9a16' &&
                         policy.approvedManifestSha256 !== null &&
                         policy.referenceSha256 ===
                           '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235' &&

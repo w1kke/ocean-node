@@ -66,7 +66,7 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9'
 const SLEEP_BASELINE_V2_CANDIDATE_SHA256 =
-  'b7fb1cd6d31f76f393044604933a45d762d6ee56dfc197c50c498aad3594a7fd'
+  '81ebd09121c902835a37c3100ea301c85775614e68230135b21b0c6fa43b9a16'
 const SLEEP_BASELINE_V2_REFERENCE_SHA256 =
   '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
@@ -461,7 +461,7 @@ function sleepBaselineV2Result(count = 9): any {
       ? 'Your seven-night baseline is ready. Add two later qualifying nights to check for a sustained descriptive change.'
       : count === 8
         ? 'One later night is available. A sustained comparison requires two later qualifying nights.'
-        : 'Two later nights were compared with your preceding seven-night baseline using reviewed group uncertainty.'
+        : 'Two later nights were compared with your preceding seven-night baseline using bound group uncertainty.'
   value.metrics = [
     { label: 'Qualifying nights', value: count, unit: 'count' },
     { label: 'Typical recording duration', value: 7, unit: 'hours' },
