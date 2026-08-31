@@ -51,6 +51,7 @@ const ANALYSIS_ID = 'brainstem.personal-resting-heart-overview/v1'
 const METHODS_ANALYSIS_ID = 'brainstem.resting-hrv-methods/v1'
 const SAMPLE_ENTROPY_ANALYSIS_ID = 'brainstem.resting-rr-sample-entropy/v1'
 const SLEEP_BASELINE_ANALYSIS_ID = 'brainstem.sleep-baseline/v1'
+const SLEEP_BASELINE_V2_ANALYSIS_ID = 'brainstem.sleep-baseline/v2'
 const OVERNIGHT_CHANGE_ANALYSIS_ID = 'brainstem.overnight-heart-rate-change/v1'
 const REST_REPEATABILITY_ANALYSIS_ID = 'brainstem.resting-hrv-repeatability/v1'
 const STANDING_RESPONSE_ANALYSIS_ID = 'brainstem.standing-heart-rate-response/v1'
@@ -64,6 +65,10 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9'
+const SLEEP_BASELINE_V2_CANDIDATE_SHA256 =
+  'b7fb1cd6d31f76f393044604933a45d762d6ee56dfc197c50c498aad3594a7fd'
+const SLEEP_BASELINE_V2_REFERENCE_SHA256 =
+  '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
@@ -151,6 +156,23 @@ function sleepBaselinePolicy(crabUrl: string): PersonalInsightPolicy {
     resultProfile: 'brainstem.sleep-baseline-personal/v1',
     maximumRecordings: 7,
     maxInputBytes: 8 * 1024 * 1024
+  }
+}
+
+function sleepBaselineV2Policy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: SLEEP_BASELINE_V2_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: SLEEP_BASELINE_V2_CANDIDATE_SHA256,
+    approvedManifestSha256: 'a'.repeat(64),
+    referenceSha256: SLEEP_BASELINE_V2_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-sleep-nightly-features/v1',
+    inputPolicy: 'brainstem.personal-sleep-baseline/latest-distinct-9/v2',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.sleep-baseline-personal/v2',
+    maximumRecordings: 9,
+    maxInputBytes: 128 * 1024
   }
 }
 
@@ -400,6 +422,86 @@ function sleepBaselineResult(): any {
     referenceSha256: '5'.repeat(64),
     referenceScopeSha256: '6'.repeat(64),
     referenceScopeDimensions: 'age_gender',
+    referenceScopeBroadened: true
+  }
+  return value
+}
+
+function sleepBaselineV2Input(count = 9): any {
+  return {
+    schema: 'brainstem.personal-sleep-nightly-features/v1',
+    policy: 'brainstem.personal-sleep-baseline/latest-distinct-9/v2',
+    referenceProfile: {
+      schema: 'brainstem.reference-profile/v1',
+      referenceYear: 2026,
+      ageBand: '30_44',
+      gender: 'female',
+      region: 'Europe'
+    },
+    nights: Array.from({ length: count }, (_, index) => ({
+      schema: 'brainstem.sleep-nightly-features/v1',
+      nightIndex: index + 1,
+      durationSeconds: 25200,
+      observedIntervalCount: 25200,
+      acceptedIntervalCount: 25200,
+      intervalSumMs: 25200000,
+      durationCoverageRatio: 1,
+      normalToNormalProvenance: 'unverified',
+      officialMethodInputCompatible: false
+    }))
+  }
+}
+
+function sleepBaselineV2Result(count = 9): any {
+  const value = methodsResult()
+  value.analysisId = SLEEP_BASELINE_V2_ANALYSIS_ID
+  value.title = 'My repeated-night sleep baseline'
+  value.summary =
+    count === 7
+      ? 'Your seven-night baseline is ready. Add two later qualifying nights to check for a sustained descriptive change.'
+      : count === 8
+        ? 'One later night is available. A sustained comparison requires two later qualifying nights.'
+        : 'Two later nights were compared with your preceding seven-night baseline using reviewed group uncertainty.'
+  value.metrics = [
+    { label: 'Qualifying nights', value: count, unit: 'count' },
+    { label: 'Typical recording duration', value: 7, unit: 'hours' },
+    { label: 'Typical derived sleeping rate', value: 60, unit: 'bpm' },
+    { label: 'Typical accepted interval share', value: 100, unit: '%' }
+  ]
+  const conclusion =
+    count === 7
+      ? 'Baseline only'
+      : count === 8
+        ? 'One recent night only; sustained comparison unavailable'
+        : 'No sustained change shown'
+  value.table = {
+    title: 'Seven-night baseline and later-night differences',
+    columns: [
+      { label: 'Measure' },
+      { label: 'Baseline' },
+      { label: 'Later night 1 difference' },
+      { label: 'Later night 2 difference' },
+      { label: 'Descriptive comparison' }
+    ],
+    rows: [
+      ['Recording duration', 7, count > 7 ? 0 : null, count > 8 ? 0 : null, conclusion],
+      [
+        'Derived sleeping rate',
+        60,
+        count > 7 ? 0 : null,
+        count > 8 ? 0 : null,
+        conclusion
+      ]
+    ]
+  }
+  value.provenance = {
+    ...value.provenance,
+    algorithmVersion: '0.1.0',
+    datasetSchemaVersion: 'brainstem.personal-sleep-nightly-features/v1',
+    candidateManifestSha256: SLEEP_BASELINE_V2_CANDIDATE_SHA256,
+    referenceSha256: SLEEP_BASELINE_V2_REFERENCE_SHA256,
+    referenceScopeSha256: '6'.repeat(64),
+    referenceScopeDimensions: 'age',
     referenceScopeBroadened: true
   }
   return value
@@ -927,6 +1029,45 @@ describe('personal Insight boundary', () => {
     ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
   })
 
+  it('binds the compact seven-to-nine-night baseline v2 contract', () => {
+    const configured = sleepBaselineV2Policy('https://crab.internal/')
+    for (const count of [7, 8, 9]) {
+      expect(() =>
+        validatePersonalInsightInput(
+          Buffer.from(JSON.stringify(sleepBaselineV2Input(count))),
+          configured
+        )
+      ).not.to.throw()
+      expect(() =>
+        validatePersonalInsightResult(
+          Buffer.from(JSON.stringify(sleepBaselineV2Result(count))),
+          configured
+        )
+      ).not.to.throw()
+    }
+
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(sleepBaselineV2Input(6))),
+        configured
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const identityLeak = sleepBaselineV2Input()
+    identityLeak.nights[0].wallet = 'must-not-enter-compute'
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(identityLeak)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const falseOneNightClaim = sleepBaselineV2Result(8)
+    falseOneNightClaim.table.rows[1][4] =
+      'Higher than your seven-night baseline on both recent nights'
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(falseOneNightClaim)),
+        configured
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+  })
+
   it('binds the expansion policies and their exact personal inputs', () => {
     const environment = {
       PERSONAL_INSIGHT_TEST_TOKEN: 'generated-personal-test-token-long-enough',
@@ -1328,6 +1469,22 @@ describe('personal Insight boundary', () => {
         personalInsight: sleepBaselinePolicy('https://crab.internal/')
       }).success
     ).to.equal(true)
+    const sleepBaselineV2 = sleepBaselineV2Policy('https://crab.internal/')
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: sleepBaselineV2
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: {
+          ...sleepBaselineV2,
+          referenceSha256: '0'.repeat(64)
+        }
+      }).success
+    ).to.equal(false)
 
     expect(
       C2DEnvironmentConfigSchema.safeParse({

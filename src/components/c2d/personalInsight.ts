@@ -22,6 +22,10 @@ const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
 const SLEEP_BASELINE_CANDIDATE_SHA256 =
   'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9'
+const SLEEP_BASELINE_V2_CANDIDATE_SHA256 =
+  'b7fb1cd6d31f76f393044604933a45d762d6ee56dfc197c50c498aad3594a7fd'
+const SLEEP_BASELINE_V2_REFERENCE_SHA256 =
+  '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const REST_REPEATABILITY_CANDIDATE_SHA256 =
@@ -184,6 +188,21 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       SHA256.test(policy.approvedManifestSha256) &&
       policy.referenceSha256 === null &&
       policy.evidenceTier === 'E1_public_reproduced'
+    )
+  }
+  if (policy.analysisId === 'brainstem.sleep-baseline/v2') {
+    return (
+      policy.maximumRecordings === 9 &&
+      policy.algorithmVersion === '0.1.0' &&
+      policy.inputSchema === 'brainstem.personal-sleep-nightly-features/v1' &&
+      policy.inputPolicy === 'brainstem.personal-sleep-baseline/latest-distinct-9/v2' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.sleep-baseline-personal/v2' &&
+      policy.candidateManifestSha256 === SLEEP_BASELINE_V2_CANDIDATE_SHA256 &&
+      typeof policy.approvedManifestSha256 === 'string' &&
+      SHA256.test(policy.approvedManifestSha256) &&
+      policy.referenceSha256 === SLEEP_BASELINE_V2_REFERENCE_SHA256 &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
     )
   }
   if (policy.analysisId === 'brainstem.resting-hrv-repeatability/v1') {
@@ -821,33 +840,83 @@ const sleepRecording = z
     }
   })
 
+const personalReferenceProfile = z
+  .object({
+    schema: z.literal('brainstem.reference-profile/v1'),
+    referenceYear: z.literal(2026),
+    ageBand: z.enum(['under_30', '30_44', '45_59', '60_plus']).nullable(),
+    gender: z.enum(['female', 'male']).nullable(),
+    region: z
+      .enum([
+        'North America',
+        'Europe',
+        'South East Asia',
+        'East Asia',
+        'Middle East',
+        'South America',
+        'Central Asia',
+        'Other'
+      ])
+      .nullable()
+  })
+  .strict()
+
 const sleepBaselinePersonalInput = z
   .object({
     schema: z.literal('brainstem.personal-sleep-baseline/v2'),
     policy: z.literal('brainstem.personal-sleep-baseline/latest-7/v2'),
-    referenceProfile: z
-      .object({
-        schema: z.literal('brainstem.reference-profile/v1'),
-        referenceYear: z.literal(2026),
-        ageBand: z.enum(['under_30', '30_44', '45_59', '60_plus']).nullable(),
-        gender: z.enum(['female', 'male']).nullable(),
-        region: z
-          .enum([
-            'North America',
-            'Europe',
-            'South East Asia',
-            'East Asia',
-            'Middle East',
-            'South America',
-            'Central Asia',
-            'Other'
-          ])
-          .nullable()
-      })
-      .strict(),
+    referenceProfile: personalReferenceProfile,
     recordings: z.array(sleepRecording).min(1).max(7)
   })
   .strict()
+
+const sleepNightlyFeature = z
+  .object({
+    schema: z.literal('brainstem.sleep-nightly-features/v1'),
+    nightIndex: z.number().int().min(1).max(9),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(5 * 60 * 60)
+      .max(12 * 60 * 60),
+    observedIntervalCount: z.number().int().min(9000).max(172800),
+    acceptedIntervalCount: z.number().int().min(9000).max(172800),
+    intervalSumMs: z.number().finite().positive(),
+    durationCoverageRatio: z.number().finite().min(0.9).max(1.1),
+    normalToNormalProvenance: z.literal('unverified'),
+    officialMethodInputCompatible: z.literal(false)
+  })
+  .strict()
+  .superRefine((night, context) => {
+    if (
+      night.acceptedIntervalCount > night.observedIntervalCount ||
+      night.acceptedIntervalCount / night.observedIntervalCount < 0.95 ||
+      night.intervalSumMs < 250 * night.acceptedIntervalCount ||
+      night.intervalSumMs > 2000 * night.acceptedIntervalCount ||
+      Math.abs(
+        night.durationCoverageRatio - night.intervalSumMs / 1000 / night.durationSeconds
+      ) > 0.000001
+    ) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'night quality mismatch' })
+    }
+  })
+
+const sleepBaselineV2PersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-sleep-nightly-features/v1'),
+    policy: z.literal('brainstem.personal-sleep-baseline/latest-distinct-9/v2'),
+    referenceProfile: personalReferenceProfile,
+    nights: z.array(sleepNightlyFeature).min(7).max(9)
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.nights.some((night, index) => night.nightIndex !== index + 1)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'night sequence mismatch'
+      })
+    }
+  })
 
 const overnightNight = z
   .object({
@@ -1038,9 +1107,11 @@ export function validatePersonalInsightInput(
               ? standingResponsePersonalInput
               : policy.inputSchema === 'brainstem.personal-guided-breathing-response/v1'
                 ? guidedBreathingPersonalInput
-                : policy.inputSchema === 'brainstem.personal-sleep-baseline/v2'
-                  ? sleepBaselinePersonalInput
-                  : legacyPersonalInput
+                : policy.inputSchema === 'brainstem.personal-sleep-nightly-features/v1'
+                  ? sleepBaselineV2PersonalInput
+                  : policy.inputSchema === 'brainstem.personal-sleep-baseline/v2'
+                    ? sleepBaselinePersonalInput
+                    : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }
@@ -1085,6 +1156,52 @@ export function validatePersonalInsightResult(
           typeof provenance?.referenceScopeBroadened !== 'boolean'
         ) {
           throw new Error('sleep reference scope is invalid')
+        }
+      }
+      if (policy.analysisId === 'brainstem.sleep-baseline/v2') {
+        const result = value as any
+        const provenance = result?.provenance
+        const metrics = result?.metrics
+        const table = result?.table
+        const nights = metrics?.[0]?.value
+        const conclusions = table?.rows?.map((row: unknown[]) => row?.[4])
+        const expectedConclusion =
+          nights === 7
+            ? ['Baseline only']
+            : nights === 8
+              ? ['One recent night only; sustained comparison unavailable']
+              : [
+                  'Higher than your seven-night baseline on both recent nights',
+                  'Lower than your seven-night baseline on both recent nights',
+                  'No sustained change shown'
+                ]
+        if (
+          result.status !== 'complete' ||
+          result.title !== 'My repeated-night sleep baseline' ||
+          !Number.isInteger(nights) ||
+          nights < 7 ||
+          nights > 9 ||
+          metrics?.map((item: any) => item.label).join('|') !==
+            'Qualifying nights|Typical recording duration|Typical derived sleeping rate|Typical accepted interval share' ||
+          table?.title !== 'Seven-night baseline and later-night differences' ||
+          table?.rows?.length !== 2 ||
+          table.rows[0][0] !== 'Recording duration' ||
+          table.rows[1][0] !== 'Derived sleeping rate' ||
+          !Array.isArray(conclusions) ||
+          conclusions.some((item: string) => !expectedConclusion.includes(item)) ||
+          (nights === 7 &&
+            table.rows.some((row: unknown[]) => row[2] !== null || row[3] !== null)) ||
+          (nights === 8 &&
+            table.rows.some((row: unknown[]) => row[2] === null || row[3] !== null)) ||
+          (nights === 9 &&
+            table.rows.some((row: unknown[]) => row[2] === null || row[3] === null)) ||
+          !SHA256.test(provenance?.referenceScopeSha256) ||
+          !['age_gender_region', 'age_gender', 'age', 'all'].includes(
+            provenance?.referenceScopeDimensions
+          ) ||
+          typeof provenance?.referenceScopeBroadened !== 'boolean'
+        ) {
+          throw new Error('sleep baseline v2 result is invalid')
         }
       }
     } catch {
