@@ -123,6 +123,11 @@ export interface PrivateDatasetPolicy {
     | 'brainstem.resting-hrv-methods/v1'
     | 'brainstem.resting-rr-sample-entropy/v1'
     | 'brainstem.full-night-rr-signal-compatibility/v1'
+    | 'brainstem.sleep-reliability-benchmark/v1'
+    | 'brainstem.overnight-heart-rate-change/v1'
+    | 'brainstem.resting-hrv-repeatability/v1'
+    | 'brainstem.standing-heart-rate-response/v1'
+    | 'brainstem.guided-breathing-response/v1'
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
@@ -136,14 +141,22 @@ export interface PrivateDatasetPolicy {
     resultBearerTokenEnv: string
   }
   paperInsight?: {
-    algorithmVersion: '0.1.0'
+    algorithmVersion: '0.1.0' | '0.2.0' | '0.3.0'
     inputSchema:
       | 'brainstem.resting-hrv-methods-cohort/v1'
       | 'brainstem.resting-sample-entropy-cohort/v1'
+      | 'brainstem.sleep-nightly-features-cohort/v1'
+      | 'brainstem.overnight-heart-rate-change-cohort/v2'
+      | 'brainstem.resting-hrv-repeatability-cohort/v1'
+      | 'brainstem.standing-heart-rate-response-cohort/v1'
+      | 'brainstem.guided-breathing-response-cohort/v1'
     candidateManifestSha256: string
     approvedManifestSha256: string
-    referenceSha256: string
-    evidenceTier: 'E2_brainstem_compatible_exploratory'
+    referenceSha256: string | null
+    evidenceTier:
+      | 'E0_candidate'
+      | 'E1_public_reproduced'
+      | 'E2_brainstem_compatible_exploratory'
     useClass: 'methods_only'
     clinicalUse: 'prohibited'
   }
@@ -164,13 +177,22 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-heart-overview/v1'
     | 'brainstem.resting-hrv-methods/v1'
     | 'brainstem.resting-rr-sample-entropy/v1'
-  algorithmVersion: '1.0.0' | '0.1.0'
+    | 'brainstem.sleep-baseline/v1'
+    | 'brainstem.sleep-baseline/v2'
+    | 'brainstem.overnight-heart-rate-change/v1'
+    | 'brainstem.resting-hrv-repeatability/v1'
+    | 'brainstem.standing-heart-rate-response/v1'
+    | 'brainstem.guided-breathing-response/v1'
+  algorithmVersion: '1.0.0' | '0.1.0' | '0.2.0'
   crabUrl: string
   approvedAlgorithmImage: string
   candidateManifestSha256: string | null
   approvedManifestSha256: string | null
   referenceSha256: string | null
-  evidenceTier: 'E2_brainstem_compatible_exploratory'
+  evidenceTier:
+    | 'E0_candidate'
+    | 'E1_public_reproduced'
+    | 'E2_brainstem_compatible_exploratory'
   useClass: 'methods_only'
   clinicalUse: 'prohibited'
   bearerTokenEnv: string
@@ -180,17 +202,35 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-rr/v1'
     | 'brainstem.personal-resting-hrv-methods/v1'
     | 'brainstem.personal-resting-sample-entropy/v1'
+    | 'brainstem.personal-sleep-baseline/v2'
+    | 'brainstem.personal-sleep-nightly-features/v1'
+    | 'brainstem.personal-overnight-heart-rate-change/v2'
+    | 'brainstem.personal-resting-hrv-repeatability/v1'
+    | 'brainstem.personal-standing-heart-rate-response/v1'
+    | 'brainstem.personal-guided-breathing-response/v1'
   inputPolicy:
     | 'brainstem.personal-resting-rr/latest-16/v1'
     | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
     | 'brainstem.personal-resting-sample-entropy/latest-4/v1'
+    | 'brainstem.personal-sleep-baseline/latest-7/v2'
+    | 'brainstem.personal-sleep-baseline/latest-distinct-9/v2'
+    | 'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2'
+    | 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1'
+    | 'brainstem.personal-standing-heart-rate-response/latest-7/v1'
+    | 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1'
   resultContract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
   resultProfile:
     | 'brainstem.personal-resting-heart-overview/v1'
     | 'brainstem.resting-hrv-methods-personal/v1'
     | 'brainstem.resting-sample-entropy-personal/v1'
+    | 'brainstem.sleep-baseline-personal/v1'
+    | 'brainstem.sleep-baseline-personal/v2'
+    | 'brainstem.overnight-heart-rate-change-personal/v2'
+    | 'brainstem.resting-hrv-repeatability-personal/v1'
+    | 'brainstem.standing-heart-rate-response-personal/v1'
+    | 'brainstem.guided-breathing-response-personal/v1'
   audience: 'brainstem-ocean-node'
-  maximumRecordings: 4 | 16
+  maximumRecordings: 4 | 7 | 9 | 16
   maxInputBytes: number
   maxResultBytes: number
   maxJobDuration: number

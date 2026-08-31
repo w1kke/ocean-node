@@ -50,6 +50,12 @@ const BFF_TOKEN = 'generated-personal-bff-token-long-enough'
 const ANALYSIS_ID = 'brainstem.personal-resting-heart-overview/v1'
 const METHODS_ANALYSIS_ID = 'brainstem.resting-hrv-methods/v1'
 const SAMPLE_ENTROPY_ANALYSIS_ID = 'brainstem.resting-rr-sample-entropy/v1'
+const SLEEP_BASELINE_ANALYSIS_ID = 'brainstem.sleep-baseline/v1'
+const SLEEP_BASELINE_V2_ANALYSIS_ID = 'brainstem.sleep-baseline/v2'
+const OVERNIGHT_CHANGE_ANALYSIS_ID = 'brainstem.overnight-heart-rate-change/v1'
+const REST_REPEATABILITY_ANALYSIS_ID = 'brainstem.resting-hrv-repeatability/v1'
+const STANDING_RESPONSE_ANALYSIS_ID = 'brainstem.standing-heart-rate-response/v1'
+const GUIDED_BREATHING_ANALYSIS_ID = 'brainstem.guided-breathing-response/v1'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const METHODS_APPROVED_SHA256 = '1'.repeat(64)
@@ -57,6 +63,24 @@ const METHODS_REFERENCE_SHA256 =
   '8fb8f2fb8b04af06c002412fc5c8aea94f9a59e9703ccd7943139eb1ded79b15'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+const SLEEP_BASELINE_CANDIDATE_SHA256 =
+  'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9'
+const SLEEP_BASELINE_V2_CANDIDATE_SHA256 =
+  '81ebd09121c902835a37c3100ea301c85775614e68230135b21b0c6fa43b9a16'
+const SLEEP_BASELINE_V2_REFERENCE_SHA256 =
+  '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235'
+const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
+  '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
+const REST_REPEATABILITY_CANDIDATE_SHA256 =
+  '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd'
+const STANDING_RESPONSE_CANDIDATE_SHA256 =
+  'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
+const STANDING_RESPONSE_REFERENCE_SHA256 =
+  'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979'
+const GUIDED_BREATHING_CANDIDATE_SHA256 =
+  'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
+const GUIDED_BREATHING_REFERENCE_SHA256 =
+  '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
@@ -123,6 +147,109 @@ function sampleEntropyPolicy(crabUrl: string): PersonalInsightPolicy {
     resultContract: 'brainstem.insight-result/v1',
     resultProfile: 'brainstem.resting-sample-entropy-personal/v1',
     maximumRecordings: 4
+  }
+}
+
+function sleepBaselinePolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: SLEEP_BASELINE_ANALYSIS_ID,
+    algorithmVersion: '0.2.0',
+    candidateManifestSha256: SLEEP_BASELINE_CANDIDATE_SHA256,
+    approvedManifestSha256: '4'.repeat(64),
+    referenceSha256: '5'.repeat(64),
+    inputSchema: 'brainstem.personal-sleep-baseline/v2',
+    inputPolicy: 'brainstem.personal-sleep-baseline/latest-7/v2',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.sleep-baseline-personal/v1',
+    maximumRecordings: 7,
+    maxInputBytes: 8 * 1024 * 1024
+  }
+}
+
+function sleepBaselineV2Policy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: SLEEP_BASELINE_V2_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: SLEEP_BASELINE_V2_CANDIDATE_SHA256,
+    approvedManifestSha256: 'a'.repeat(64),
+    referenceSha256: SLEEP_BASELINE_V2_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-sleep-nightly-features/v1',
+    inputPolicy: 'brainstem.personal-sleep-baseline/latest-distinct-9/v2',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.sleep-baseline-personal/v2',
+    maximumRecordings: 9,
+    maxInputBytes: 128 * 1024
+  }
+}
+
+function overnightChangePolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: OVERNIGHT_CHANGE_ANALYSIS_ID,
+    algorithmVersion: '0.2.0',
+    candidateManifestSha256: OVERNIGHT_CHANGE_CANDIDATE_SHA256,
+    approvedManifestSha256: '6'.repeat(64),
+    referenceSha256: null,
+    evidenceTier: 'E1_public_reproduced',
+    inputSchema: 'brainstem.personal-overnight-heart-rate-change/v2',
+    inputPolicy:
+      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.overnight-heart-rate-change-personal/v2',
+    maximumRecordings: 9,
+    maxInputBytes: 8 * 1024 * 1024
+  }
+}
+
+function restRepeatabilityPolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: REST_REPEATABILITY_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: REST_REPEATABILITY_CANDIDATE_SHA256,
+    approvedManifestSha256: '7'.repeat(64),
+    referenceSha256: null,
+    evidenceTier: 'E0_candidate',
+    inputSchema: 'brainstem.personal-resting-hrv-repeatability/v1',
+    inputPolicy: 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.resting-hrv-repeatability-personal/v1',
+    maximumRecordings: 7
+  }
+}
+
+function standingResponsePolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: STANDING_RESPONSE_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: STANDING_RESPONSE_CANDIDATE_SHA256,
+    approvedManifestSha256: '8'.repeat(64),
+    referenceSha256: STANDING_RESPONSE_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-standing-heart-rate-response/v1',
+    inputPolicy: 'brainstem.personal-standing-heart-rate-response/latest-7/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.standing-heart-rate-response-personal/v1',
+    maximumRecordings: 7
+  }
+}
+
+function guidedBreathingPolicy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...policy(crabUrl),
+    analysisId: GUIDED_BREATHING_ANALYSIS_ID,
+    algorithmVersion: '0.1.0',
+    candidateManifestSha256: GUIDED_BREATHING_CANDIDATE_SHA256,
+    approvedManifestSha256: '9'.repeat(64),
+    referenceSha256: GUIDED_BREATHING_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-guided-breathing-response/v1',
+    inputPolicy:
+      'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1',
+    resultContract: 'brainstem.insight-result/v1',
+    resultProfile: 'brainstem.guided-breathing-response-personal/v1',
+    maximumRecordings: 7
   }
 }
 
@@ -258,6 +385,252 @@ function sampleEntropyInput(): any {
       }
     ]
   }
+}
+
+function sleepBaselineInput(): any {
+  const rrIntervalsMs = Array(18000).fill(1000)
+  return {
+    schema: 'brainstem.personal-sleep-baseline/v2',
+    policy: 'brainstem.personal-sleep-baseline/latest-7/v2',
+    referenceProfile: {
+      schema: 'brainstem.reference-profile/v1',
+      referenceYear: 2026,
+      ageBand: '30_44',
+      gender: 'female',
+      region: 'Europe'
+    },
+    recordings: [
+      {
+        recordingType: 'sleep',
+        durationSeconds: 18000,
+        intervalSemantics: 'detector_rr_unclassified',
+        allowedUse: 'private_descriptive_self_only',
+        quality: {
+          observedIntervalCount: rrIntervalsMs.length,
+          acceptedIntervalCount: rrIntervalsMs.length,
+          acceptedFraction: 1,
+          durationCoverageRatio: 1,
+          normalToNormalProvenance: 'unverified',
+          officialMethodInputCompatible: false
+        },
+        rrIntervalsMs
+      }
+    ]
+  }
+}
+
+function sleepBaselineResult(): any {
+  const value = methodsResult()
+  value.analysisId = SLEEP_BASELINE_ANALYSIS_ID
+  value.provenance = {
+    ...value.provenance,
+    algorithmVersion: '0.2.0',
+    datasetSchemaVersion: 'brainstem.personal-sleep-baseline/v2',
+    candidateManifestSha256: SLEEP_BASELINE_CANDIDATE_SHA256,
+    referenceSha256: '5'.repeat(64),
+    referenceScopeSha256: '6'.repeat(64),
+    referenceScopeDimensions: 'age_gender',
+    referenceScopeBroadened: true
+  }
+  return value
+}
+
+function sleepBaselineV2Input(count = 9): any {
+  return {
+    schema: 'brainstem.personal-sleep-nightly-features/v1',
+    policy: 'brainstem.personal-sleep-baseline/latest-distinct-9/v2',
+    referenceProfile: {
+      schema: 'brainstem.reference-profile/v1',
+      referenceYear: 2026,
+      ageBand: '30_44',
+      gender: 'female',
+      region: 'Europe'
+    },
+    nights: Array.from({ length: count }, (_, index) => ({
+      schema: 'brainstem.sleep-nightly-features/v1',
+      nightIndex: index + 1,
+      durationSeconds: 25200,
+      observedIntervalCount: 25200,
+      acceptedIntervalCount: 25200,
+      intervalSumMs: 25200000,
+      durationCoverageRatio: 1,
+      normalToNormalProvenance: 'unverified',
+      officialMethodInputCompatible: false
+    }))
+  }
+}
+
+function sleepBaselineV2Result(count = 9): any {
+  const value = methodsResult()
+  value.analysisId = SLEEP_BASELINE_V2_ANALYSIS_ID
+  value.title = 'My repeated-night sleep baseline'
+  value.summary =
+    count === 7
+      ? 'Your seven-night baseline is ready. Add two later qualifying nights to check for a sustained descriptive change.'
+      : count === 8
+        ? 'One later night is available. A sustained comparison requires two later qualifying nights.'
+        : 'Two later nights were compared with your preceding seven-night baseline using bound group uncertainty.'
+  value.metrics = [
+    { label: 'Qualifying nights', value: count, unit: 'count' },
+    { label: 'Typical recording duration', value: 7, unit: 'hours' },
+    { label: 'Typical derived sleeping rate', value: 60, unit: 'bpm' },
+    { label: 'Typical accepted interval share', value: 100, unit: '%' }
+  ]
+  const conclusion =
+    count === 7
+      ? 'Baseline only'
+      : count === 8
+        ? 'One recent night only; sustained comparison unavailable'
+        : 'No sustained change shown'
+  value.table = {
+    title: 'Seven-night baseline and later-night differences',
+    columns: [
+      { label: 'Measure' },
+      { label: 'Baseline' },
+      { label: 'Later night 1 difference' },
+      { label: 'Later night 2 difference' },
+      { label: 'Descriptive comparison' }
+    ],
+    rows: [
+      ['Recording duration', 7, count > 7 ? 0 : null, count > 8 ? 0 : null, conclusion],
+      [
+        'Derived sleeping rate',
+        60,
+        count > 7 ? 0 : null,
+        count > 8 ? 0 : null,
+        conclusion
+      ]
+    ]
+  }
+  value.provenance = {
+    ...value.provenance,
+    algorithmVersion: '0.1.0',
+    datasetSchemaVersion: 'brainstem.personal-sleep-nightly-features/v1',
+    candidateManifestSha256: SLEEP_BASELINE_V2_CANDIDATE_SHA256,
+    referenceSha256: SLEEP_BASELINE_V2_REFERENCE_SHA256,
+    referenceScopeSha256: '6'.repeat(64),
+    referenceScopeDimensions: 'age',
+    referenceScopeBroadened: true
+  }
+  return value
+}
+
+function overnightChangeInput(): any {
+  return {
+    schema: 'brainstem.personal-overnight-heart-rate-change/v2',
+    policy:
+      'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2',
+    movementSchema: 'brainstem.normalized-movement/v1',
+    movementThresholdMilliG: 100,
+    nights: Array.from({ length: 9 }, (_, index) => ({
+      nightIndex: index + 1,
+      durationSeconds: 18000,
+      observedIntervalCount: 18000,
+      acceptedIntervalCount: 18000,
+      intervalSumMs: 18000000,
+      durationCoverageRatio: 1,
+      movementCoverageFraction: 1,
+      alignedHeartRateSampleFraction: 1,
+      movementEventCount: 10,
+      movementEventRatePerHour: 2,
+      quietWindowProportion: 0.9,
+      quietMeanHeartRateBpm: 60,
+      movementMeanHeartRateBpm: 72,
+      normalToNormalProvenance: 'unverified',
+      officialMethodInputCompatible: false
+    }))
+  }
+}
+
+function restRepeatabilityInput(): any {
+  const recording = methodsInput().recordings[0]
+  return {
+    schema: 'brainstem.personal-resting-hrv-repeatability/v1',
+    policy: 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1',
+    recordings: [recording, { ...recording, rrIntervalsMs: [...recording.rrIntervalsMs] }]
+  }
+}
+
+function standingResponseInput(): any {
+  return {
+    schema: 'brainstem.personal-standing-heart-rate-response/v1',
+    policy: 'brainstem.personal-standing-heart-rate-response/latest-7/v1',
+    recordings: [
+      {
+        recordingType: 'posture',
+        durationSeconds: 300,
+        rrIntervalsMs: Array(600).fill(500)
+      }
+    ]
+  }
+}
+
+function standingResponseResult(): any {
+  const value = methodsResult()
+  value.analysisId = STANDING_RESPONSE_ANALYSIS_ID
+  value.title = 'My standing heart-rate response'
+  value.summary = 'Your heart-rate response across compatible posture recordings.'
+  value.metrics = [{ label: 'Typical response', value: 18.2, unit: 'bpm' }]
+  value.charts = [
+    {
+      type: 'line',
+      title: 'Response by compatible recording',
+      x: { label: 'Recording', values: [1] },
+      y: { label: 'Heart-rate response', unit: 'bpm' },
+      series: [{ label: 'Your recordings', values: [18.2] }]
+    }
+  ]
+  value.table = null
+  value.provenance = {
+    ...value.provenance,
+    datasetSchemaVersion: 'brainstem.personal-standing-heart-rate-response/v1',
+    candidateManifestSha256: STANDING_RESPONSE_CANDIDATE_SHA256,
+    referenceSha256: STANDING_RESPONSE_REFERENCE_SHA256
+  }
+  return value
+}
+
+function guidedBreathingInput(): any {
+  const protocol = { rateCPM: 6, ih: 5, ip: 0, eh: 5, ep: 0 }
+  return {
+    schema: 'brainstem.personal-guided-breathing-response/v1',
+    policy: 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1',
+    protocol,
+    recordings: [
+      {
+        recordingIndex: 1,
+        recordingType: 'exercise',
+        durationSeconds: 300,
+        protocol,
+        rrIntervalsMs: Array(300).fill(1000)
+      }
+    ]
+  }
+}
+
+function guidedBreathingResult(): any {
+  const value = methodsResult()
+  value.analysisId = GUIDED_BREATHING_ANALYSIS_ID
+  value.title = 'My guided-breathing response'
+  value.summary = 'Your response across compatible guided-breathing sessions.'
+  value.metrics = [{ label: 'Typical RMSSD', value: 12.4, unit: 'ms' }]
+  value.charts = [
+    {
+      type: 'line',
+      title: 'Beat-to-beat variation by compatible session',
+      x: { label: 'Session', values: [1] },
+      y: { label: 'Variation', unit: 'ms' },
+      series: [{ label: 'RMSSD', values: [12.4] }]
+    }
+  ]
+  value.table = null
+  value.provenance = {
+    ...value.provenance,
+    datasetSchemaVersion: 'brainstem.personal-guided-breathing-response/v1',
+    candidateManifestSha256: GUIDED_BREATHING_CANDIDATE_SHA256,
+    referenceSha256: GUIDED_BREATHING_REFERENCE_SHA256
+  }
+  return value
 }
 
 function sampleEntropyResult(): any {
@@ -634,6 +1007,183 @@ describe('personal Insight boundary', () => {
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
   })
 
+  it('binds the sleep baseline release and exact private full-night contract', () => {
+    const configured = sleepBaselinePolicy('https://crab.internal/')
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(sleepBaselineInput())),
+        configured
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(sleepBaselineResult())),
+        configured
+      )
+    ).not.to.throw()
+
+    const mismatchedQuality = sleepBaselineInput()
+    mismatchedQuality.recordings[0].quality.acceptedIntervalCount -= 1
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(mismatchedQuality)),
+        configured
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const missingScope = sleepBaselineResult()
+    delete missingScope.provenance.referenceScopeSha256
+    expect(() =>
+      validatePersonalInsightResult(Buffer.from(JSON.stringify(missingScope)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+  })
+
+  it('binds the compact seven-to-nine-night baseline v2 contract', () => {
+    const configured = sleepBaselineV2Policy('https://crab.internal/')
+    for (const count of [7, 8, 9]) {
+      expect(() =>
+        validatePersonalInsightInput(
+          Buffer.from(JSON.stringify(sleepBaselineV2Input(count))),
+          configured
+        )
+      ).not.to.throw()
+      expect(() =>
+        validatePersonalInsightResult(
+          Buffer.from(JSON.stringify(sleepBaselineV2Result(count))),
+          configured
+        )
+      ).not.to.throw()
+    }
+
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(sleepBaselineV2Input(6))),
+        configured
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const identityLeak = sleepBaselineV2Input()
+    identityLeak.nights[0].wallet = 'must-not-enter-compute'
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(identityLeak)), configured)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const falseOneNightClaim = sleepBaselineV2Result(8)
+    falseOneNightClaim.table.rows[1][4] =
+      'Higher than your seven-night baseline on both recent nights'
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(falseOneNightClaim)),
+        configured
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+
+    const unavailableReliability = sleepBaselineV2Result(9)
+    unavailableReliability.table.rows[0][4] =
+      'Descriptive only; reference reliability not established'
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(unavailableReliability)),
+        configured
+      )
+    ).not.to.throw()
+  })
+
+  it('binds the expansion policies and their exact personal inputs', () => {
+    const environment = {
+      PERSONAL_INSIGHT_TEST_TOKEN: 'generated-personal-test-token-long-enough',
+      PERSONAL_INSIGHT_BFF_TEST_TOKEN: BFF_TOKEN
+    }
+    const crabUrl = 'http://127.0.0.1:4321/'
+    const overnight = overnightChangePolicy(crabUrl)
+    const repeatability = restRepeatabilityPolicy(crabUrl)
+    const standing = standingResponsePolicy(crabUrl)
+    const guidedBreathing = guidedBreathingPolicy(crabUrl)
+
+    expect(() =>
+      assertPersonalInsightConfiguration(overnight, environment)
+    ).not.to.throw()
+    expect(() =>
+      assertPersonalInsightConfiguration(repeatability, environment)
+    ).not.to.throw()
+    expect(() => assertPersonalInsightConfiguration(standing, environment)).not.to.throw()
+    expect(() =>
+      assertPersonalInsightConfiguration(guidedBreathing, environment)
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(overnightChangeInput())),
+        overnight
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(restRepeatabilityInput())),
+        repeatability
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(standingResponseInput())),
+        standing
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(standingResponseResult())),
+        standing
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(guidedBreathingInput())),
+        guidedBreathing
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(guidedBreathingResult())),
+        guidedBreathing
+      )
+    ).not.to.throw()
+
+    const wrongReference = standingResponsePolicy(crabUrl)
+    wrongReference.referenceSha256 = '9'.repeat(64)
+    expect(() =>
+      assertPersonalInsightConfiguration(wrongReference, environment)
+    ).to.throw(PersonalInsightError, 'personal_insight_policy_invalid')
+    const wrongRecording = standingResponseInput()
+    wrongRecording.recordings[0].recordingType = 'rest'
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongRecording)), standing)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const wrongProtocol = guidedBreathingInput()
+    wrongProtocol.recordings[0].protocol.rateCPM = 5
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(wrongProtocol)),
+        guidedBreathing
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+    const duplicateIndex = guidedBreathingInput()
+    duplicateIndex.recordings.push({ ...duplicateIndex.recordings[0] })
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(duplicateIndex)),
+        guidedBreathing
+      )
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+
+    const wrongOrder = overnightChangeInput()
+    wrongOrder.nights[8].nightIndex = 8
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(wrongOrder)), overnight)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+
+    const rawMovement = overnightChangeInput()
+    rawMovement.nights[0].rawMovementSamples = [[0, 0, 1000]]
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(rawMovement)), overnight)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+  })
+
   it('retries only an idempotent completion after a lost connection', async () => {
     completionConnectionFailures = 1
     await completePersonalInsightRun(
@@ -929,6 +1479,29 @@ describe('personal Insight boundary', () => {
       C2DEnvironmentConfigSchema.safeParse({
         ...methodsConfigured,
         personalInsight: { ...reviewedMethods, referenceSha256: null }
+      }).success
+    ).to.equal(false)
+
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: sleepBaselinePolicy('https://crab.internal/')
+      }).success
+    ).to.equal(true)
+    const sleepBaselineV2 = sleepBaselineV2Policy('https://crab.internal/')
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: sleepBaselineV2
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...methodsConfigured,
+        personalInsight: {
+          ...sleepBaselineV2,
+          referenceSha256: '0'.repeat(64)
+        }
       }).success
     ).to.equal(false)
 

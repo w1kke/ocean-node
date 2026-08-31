@@ -1,5 +1,6 @@
 /* eslint-disable security/detect-non-literal-fs-filename */
 import { expect } from 'chai'
+import { createHash } from 'crypto'
 import { Readable } from 'stream'
 import * as tarStream from 'tar-stream'
 import sinon from 'sinon'
@@ -10,7 +11,8 @@ import path from 'path'
 import {
   readSingleJsonResultArchive,
   validateConsumerResultContract,
-  validateReviewedInsightResult
+  validateReviewedInsightResult,
+  validateSleepReliabilityResult
 } from '../../components/c2d/consumerResult.js'
 import {
   C2DStatusNumber,
@@ -58,6 +60,17 @@ async function expectRejected(archive: Buffer, message: string, maxBytes = 1024)
     failure = error as Error
   }
   expect(failure?.message.toLowerCase()).to.include(message.toLowerCase())
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
 }
 
 describe('single JSON consumer result', () => {
@@ -252,6 +265,104 @@ describe('single JSON consumer result', () => {
     expect(() =>
       validateReviewedInsightResult(Buffer.from(JSON.stringify(result)), expected)
     ).to.throw('reviewed Insight policy')
+  })
+
+  it('validates and hashes the exact sleep reliability reference', () => {
+    const image = `sha256:${'a'.repeat(64)}`
+    const estimate = (unit: 'hours' | 'bpm') => ({
+      unit,
+      p10: 1,
+      p25: 2,
+      p50: 3,
+      p75: 4,
+      p90: 5,
+      icc11: 0.8,
+      icc11Ci95: [0.7, 0.9],
+      meanReliabilityByNights: Array.from({ length: 7 }, (_, index) => ({
+        nights: index + 1,
+        estimate: 0.8,
+        ci95: [0.7, 0.9]
+      })),
+      minimumNightsForLowerCi80: 3,
+      medianWithinPersonCvPercent: 4,
+      medianWithinPersonCvPercentCi95: [3, 5]
+    })
+    const referenceValue: any = {
+      schema: 'brainstem.sleep-reliability-reference/v1',
+      version: 'generated-review-candidate-v1',
+      analysisId: 'brainstem.sleep-baseline/v2',
+      sourceType: 'generated_fixture',
+      sourceReleaseSha256: '1'.repeat(64),
+      sourceSnapshotSha256: '2'.repeat(64),
+      inclusionContract: 'brainstem.full-night-nightly-features/exact-distinct-7/v1',
+      algorithmVersion: '0.3.0',
+      algorithmImageDigest: image,
+      candidateManifestSha256:
+        'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073',
+      referenceYear: 2026,
+      minimumParticipants: 20,
+      ageBands: ['under_30', '30_44', '45_59', '60_plus'],
+      reliability: {
+        durationHours: estimate('hours'),
+        sleepingRateBpm: estimate('bpm')
+      },
+      scopes: [
+        {
+          scopeId: '3'.repeat(64),
+          dimensions: [],
+          participantCountBand: '20 to 49',
+          bands: {
+            durationHours: [2, 4],
+            sleepingRateBpm: [50, 70],
+            acceptedPercent: [95, 100]
+          }
+        }
+      ]
+    }
+    const reference = {
+      ...referenceValue,
+      sha256: createHash('sha256')
+        .update(`${canonicalJson(referenceValue)}\n`)
+        .digest('hex')
+    }
+    const result: any = {
+      schema: 'brainstem.c2d-result/v1',
+      status: 'complete',
+      title: 'Sleep recording reliability benchmark',
+      summary: 'Generated reliability result.',
+      metrics: [{ label: 'Reliability', value: 0.8, unit: 'ICC' }],
+      charts: [],
+      table: null,
+      warnings: [],
+      provenance: {
+        analysisId: 'brainstem.sleep-reliability-benchmark/v1',
+        algorithmVersion: '0.3.0',
+        algorithmImageDigest: image,
+        candidateManifestSha256:
+          'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073',
+        datasetSchemaVersion: 'brainstem.sleep-nightly-features-cohort/v1',
+        selectorPolicy: 'brainstem.full-night-nightly-features/exact-distinct-7/v1',
+        generatedAt: '2026-08-31T00:00:00Z',
+        estimator: 'ICC(1,1) balanced one-way random-effects absolute agreement',
+        bootstrap: '10000 deterministic participant-level resamples',
+        referenceSha256: reference.sha256
+      },
+      reference
+    }
+    const bytes = Buffer.from(JSON.stringify(result))
+    expect(() => validateSleepReliabilityResult(bytes, image)).not.to.throw()
+    expect(
+      validateConsumerResultContract(bytes, {
+        mode: 'singleJson',
+        maxBytes: 262144,
+        resultContract: 'brainstem.c2d-result/v1'
+      })?.status
+    ).to.equal('complete')
+
+    result.reference.reliability.durationHours.p50 = 3.5
+    expect(() =>
+      validateSleepReliabilityResult(Buffer.from(JSON.stringify(result)), image)
+    ).to.throw('reference digest')
   })
 
   it('publishes only validated bytes to local or remote storage', async () => {

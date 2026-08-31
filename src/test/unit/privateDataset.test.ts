@@ -26,6 +26,12 @@ import type { UrlFileObject } from '../../@types/fileObject.js'
 const JOB_ID = 'a'.repeat(64)
 const IMAGE = `brainstem/private-rr@sha256:${'b'.repeat(64)}`
 
+const twenty = (participant: Record<string, unknown>) =>
+  Array.from({ length: 20 }, (_, index) => ({
+    ...structuredClone(participant),
+    subjectId: (index + 1).toString(16).padStart(64, '0')
+  }))
+
 describe('Private dataset provisioning', () => {
   let server: Server
   let directory: string
@@ -39,6 +45,7 @@ describe('Private dataset provisioning', () => {
   let receivedStudyRevisionId: string
   let receivedStudyRevisionSha256: string
   let receivedStudyDataPermitId: string
+  let receivedAlgorithmVersion: string
   let responseMode: string
   let body: Buffer
   let policy: PrivateDatasetPolicy
@@ -55,6 +62,7 @@ describe('Private dataset provisioning', () => {
     receivedStudyRevisionId = ''
     receivedStudyRevisionSha256 = ''
     receivedStudyDataPermitId = ''
+    receivedAlgorithmVersion = ''
     responseMode = 'valid'
     body = Buffer.from('{"schema":"brainstem.private-rr-cohort/v1"}')
     server = createServer((request, response) => {
@@ -75,6 +83,9 @@ describe('Private dataset provisioning', () => {
       receivedStudyDataPermitId = String(
         request.headers['x-brainstem-study-data-permit-id'] ?? ''
       )
+      receivedAlgorithmVersion = String(
+        request.headers['x-brainstem-algorithm-version'] ?? ''
+      )
       if (responseMode === 'redirect') {
         response.writeHead(302, { Location: '/other' })
         response.end()
@@ -91,7 +102,10 @@ describe('Private dataset provisioning', () => {
         'X-Content-SHA256': responseMode === 'bad-checksum' ? '0'.repeat(64) : checksum,
         ...(responseMode === 'no-snapshot'
           ? {}
-          : { 'X-Brainstem-Source-Snapshot-SHA256': 'e'.repeat(64) })
+          : { 'X-Brainstem-Source-Snapshot-SHA256': 'e'.repeat(64) }),
+        ...(responseMode === 'no-sequence'
+          ? {}
+          : { 'X-Brainstem-Release-Sequence-SHA256': '9'.repeat(64) })
       }
       if (responseMode !== 'no-length') headers['Content-Length'] = body.length
       response.writeHead(200, headers)
@@ -294,6 +308,14 @@ describe('Private dataset provisioning', () => {
     await expectFailure('private_dataset_source_snapshot_invalid')
   })
 
+  it('rejects caller control of the algorithm version header before fetching', async () => {
+    file.headers = {
+      'X-Brainstem-Algorithm-Version': 'researcher-controlled'
+    }
+    await expectFailure('private_dataset_algorithm_version_header_is_reserved')
+    expect(requestCount).to.equal(0)
+  })
+
   it('rejects all caller-supplied headers and missing service credentials', async () => {
     file.headers = { Authorization: 'Bearer caller-controlled' }
     await expectFailure('private_dataset_headers_not_allowed')
@@ -418,7 +440,12 @@ describe('Private dataset provisioning', () => {
 
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
     expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-methods/v1')
+    expect(receivedAlgorithmVersion).to.equal('0.1.0')
     rmSync(destination)
+
+    responseMode = 'no-sequence'
+    await expectFailure('private_dataset_release_sequence_invalid')
+    responseMode = 'valid'
 
     body = Buffer.from(
       JSON.stringify({
@@ -527,6 +554,302 @@ describe('Private dataset provisioning', () => {
         environment
       )
     ).to.throw(PrivateDatasetError, 'private_dataset_transport_invalid')
+  })
+
+  it('accepts only the exact seven-night sleep reliability contract', async () => {
+    policy = {
+      ...policy,
+      maxBytes: 16 * 1024 * 1024,
+      analysisId: 'brainstem.sleep-reliability-benchmark/v1',
+      paperInsight: {
+        algorithmVersion: '0.3.0',
+        inputSchema: 'brainstem.sleep-nightly-features-cohort/v1',
+        candidateManifestSha256:
+          'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073',
+        approvedManifestSha256: 'd'.repeat(64),
+        referenceSha256: null,
+        evidenceTier: 'E0_candidate',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      }
+    }
+    const night = (index: number) => ({
+      schema: 'brainstem.sleep-nightly-features/v1',
+      nightIndex: index,
+      durationSeconds: 18_000,
+      observedIntervalCount: 18_000,
+      acceptedIntervalCount: 18_000,
+      intervalSumMs: 18_000_000,
+      durationCoverageRatio: 1,
+      normalToNormalProvenance: 'unverified',
+      officialMethodInputCompatible: false
+    })
+    const dataset: any = {
+      schema: 'brainstem.sleep-nightly-features-cohort/v1',
+      policy: 'brainstem.full-night-nightly-features/exact-distinct-7/v1',
+      allowedUse: 'aggregate_sleep_reliability_only',
+      sourceType: 'approved_real_cohort',
+      sourceReleaseSha256: 'e'.repeat(64),
+      sourceSnapshotSha256: 'f'.repeat(64),
+      participants: twenty({
+          subjectId: '1'.repeat(64),
+          referenceProfile: {
+            schema: 'brainstem.reference-profile/v1',
+            referenceYear: 2026,
+            ageBand: '30_44',
+            gender: null,
+            region: null
+          },
+          nights: Array.from({ length: 7 }, (_, index) => night(index + 1))
+        })
+    }
+    body = Buffer.from(JSON.stringify(dataset))
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.sleep-reliability-benchmark/v1')
+    expect(receivedAlgorithmVersion).to.equal('0.3.0')
+    rmSync(destination)
+
+    const drifted = structuredClone(dataset)
+    Object.assign(drifted.participants[0].nights[0], {
+      recordingDate: '2026-08-31'
+    })
+    body = Buffer.from(JSON.stringify(drifted))
+    await expectFailure('private_dataset_contract_invalid')
+  })
+
+  it('accepts the exact expansion cohort contracts', async () => {
+    const basePaper = {
+      algorithmVersion: '0.1.0' as const,
+      approvedManifestSha256: 'd'.repeat(64),
+      referenceSha256: null as null,
+      useClass: 'methods_only' as const,
+      clinicalUse: 'prohibited' as const
+    }
+    policy = {
+      ...policy,
+      maxBytes: 16 * 1024 * 1024,
+      analysisId: 'brainstem.overnight-heart-rate-change/v1',
+      paperInsight: {
+        ...basePaper,
+        algorithmVersion: '0.2.0',
+        inputSchema: 'brainstem.overnight-heart-rate-change-cohort/v2',
+        candidateManifestSha256:
+          '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907',
+        evidenceTier: 'E1_public_reproduced'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.overnight-heart-rate-change-cohort/v2',
+        policy: 'brainstem.overnight-heart-rate-change-cohort/distinct-9-movement/v2',
+        allowedUse: 'aggregate_overnight_change_only',
+        sourceType: 'approved_real_cohort',
+        movementSchema: 'brainstem.normalized-movement/v1',
+        movementThresholdMilliG: 100,
+        participants: twenty({
+            subjectId: '1'.repeat(64),
+            nights: Array.from({ length: 9 }, (_, index) => ({
+              nightIndex: index + 1,
+              durationSeconds: 18000,
+              observedIntervalCount: 18000,
+              acceptedIntervalCount: 18000,
+              intervalSumMs: 18000000,
+              durationCoverageRatio: 1,
+              movementCoverageFraction: 1,
+              alignedHeartRateSampleFraction: 1,
+              movementEventCount: 10,
+              movementEventRatePerHour: 2,
+              quietWindowProportion: 0.9,
+              quietMeanHeartRateBpm: 60,
+              movementMeanHeartRateBpm: 72,
+              normalToNormalProvenance: 'unverified',
+              officialMethodInputCompatible: false
+            }))
+          })
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    rmSync(destination)
+
+    const invalidOvernight = JSON.parse(body.toString())
+    invalidOvernight.participants[0].nights[0].rawMovementSamples = [[0, 0, 1000]]
+    body = Buffer.from(JSON.stringify(invalidOvernight))
+    await expectFailure('private_dataset_contract_invalid')
+
+    const intervals = Array(600).fill(500)
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.resting-hrv-repeatability/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.resting-hrv-repeatability-cohort/v1',
+        candidateManifestSha256:
+          '09e22348e350bb9e1da7183929675f7d67e718eb183075a7735c5513468905dd',
+        evidenceTier: 'E0_candidate'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.resting-hrv-repeatability-cohort/v1',
+        policy: 'brainstem.resting-hrv-repeatability-cohort/distinct-7/v1',
+        allowedUse: 'aggregate_resting_repeatability_only',
+        sourceType: 'approved_real_cohort',
+        participants: twenty({
+            subjectId: '2'.repeat(64),
+            recordings: Array.from({ length: 7 }, () => ({
+              recordingType: 'rest',
+              durationSeconds: 300,
+              rrIntervalsMs: intervals
+            }))
+          })
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.resting-hrv-repeatability/v1')
+    rmSync(destination)
+
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.standing-heart-rate-response/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        candidateManifestSha256:
+          'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217',
+        evidenceTier: 'E2_brainstem_compatible_exploratory'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        policy: 'brainstem.standing-heart-rate-response-cohort/latest-7/v1',
+        allowedUse: 'aggregate_standing_response_only',
+        sourceType: 'approved_real_cohort',
+        participants: twenty({
+            subjectId: '3'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'posture',
+                durationSeconds: 300,
+                rrIntervalsMs: Array(600).fill(500)
+              }
+            ]
+          })
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.standing-heart-rate-response/v1')
+    rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.standing-heart-rate-response-cohort/v1',
+        policy: 'brainstem.standing-heart-rate-response-cohort/latest-7/v1',
+        allowedUse: 'aggregate_standing_response_only',
+        sourceType: 'approved_real_cohort',
+        participants: [
+          {
+            subjectId: '3'.repeat(64),
+            recordings: [
+              {
+                recordingType: 'rest',
+                durationSeconds: 300,
+                rrIntervalsMs: Array(600).fill(500)
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
+
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.guided-breathing-response/v1',
+      paperInsight: {
+        ...basePaper,
+        inputSchema: 'brainstem.guided-breathing-response-cohort/v1',
+        candidateManifestSha256:
+          'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d',
+        evidenceTier: 'E2_brainstem_compatible_exploratory'
+      }
+    }
+    const protocol = { rateCPM: 6, ih: 5, ip: 0, eh: 5, ep: 0 }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v1',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol,
+        participants: twenty({
+            subjectId: '4'.repeat(64),
+            recordings: [
+              {
+                recordingIndex: 1,
+                recordingType: 'exercise',
+                durationSeconds: 300,
+                protocol,
+                rrIntervalsMs: Array(300).fill(1000)
+              }
+            ]
+          })
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.guided-breathing-response/v1')
+    rmSync(destination)
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v1',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol,
+        participants: [
+          {
+            subjectId: '4'.repeat(64),
+            recordings: [
+              {
+                recordingIndex: 1,
+                recordingType: 'exercise',
+                durationSeconds: 300,
+                protocol: { ...protocol, rateCPM: 5 },
+                rrIntervalsMs: Array(300).fill(1000)
+              }
+            ]
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
+
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v1',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol,
+        participants: [
+          {
+            subjectId: '4'.repeat(64),
+            recordings: [1, 2].map(() => ({
+              recordingIndex: 1,
+              recordingType: 'exercise',
+              durationSeconds: 300,
+              protocol,
+              rrIntervalsMs: Array(300).fill(1000)
+            }))
+          }
+        ]
+      })
+    )
+    await expectFailure('private_dataset_contract_invalid')
   })
 
   it('fails closed on unsafe mTLS identity and key material', () => {
