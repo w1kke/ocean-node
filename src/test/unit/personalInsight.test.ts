@@ -1066,6 +1066,16 @@ describe('personal Insight boundary', () => {
         configured
       )
     ).to.throw(PersonalInsightError, 'personal_insight_result_invalid')
+
+    const unavailableReliability = sleepBaselineV2Result(9)
+    unavailableReliability.table.rows[0][4] =
+      'Descriptive only; reference reliability not established'
+    expect(() =>
+      validatePersonalInsightResult(
+        Buffer.from(JSON.stringify(unavailableReliability)),
+        configured
+      )
+    ).not.to.throw()
   })
 
   it('binds the expansion policies and their exact personal inputs', () => {

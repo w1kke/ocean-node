@@ -1165,15 +1165,20 @@ export function validatePersonalInsightResult(
         const table = result?.table
         const nights = metrics?.[0]?.value
         const conclusions = table?.rows?.map((row: unknown[]) => row?.[4])
+        const descriptiveOnly = 'Descriptive only; reference reliability not established'
         const expectedConclusion =
           nights === 7
-            ? ['Baseline only']
+            ? ['Baseline only', descriptiveOnly]
             : nights === 8
-              ? ['One recent night only; sustained comparison unavailable']
+              ? [
+                  'One recent night only; sustained comparison unavailable',
+                  descriptiveOnly
+                ]
               : [
                   'Higher than your seven-night baseline on both recent nights',
                   'Lower than your seven-night baseline on both recent nights',
-                  'No sustained change shown'
+                  'No sustained change shown',
+                  descriptiveOnly
                 ]
         if (
           result.status !== 'complete' ||
