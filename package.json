@@ -146,12 +146,12 @@
     "tmp": "^0.2.3",
     "base64url": "^3.0.1",
     "ws": "8.21.1",
-    "undici": "6.27.0",
+    "undici": "6.28.0",
     "@libp2p/http": {
-      "undici": "7.28.0"
+      "undici": "7.29.0"
     },
     "release-it": {
-      "undici": "7.28.0"
+      "undici": "7.29.0"
     },
     "eth-crypto": {
       "secp256k1": "^5.0.0"
