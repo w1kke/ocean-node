@@ -122,6 +122,7 @@ export interface PrivateDatasetPolicy {
     | 'brainstem.resting-rr-cohort-summary/v1'
     | 'brainstem.resting-hrv-methods/v1'
     | 'brainstem.resting-rr-sample-entropy/v1'
+    | 'brainstem.sleep-reliability-benchmark/v1'
     | 'brainstem.overnight-heart-rate-change/v1'
     | 'brainstem.resting-hrv-repeatability/v1'
     | 'brainstem.standing-heart-rate-response/v1'
@@ -132,10 +133,11 @@ export interface PrivateDatasetPolicy {
   bearerTokenEnv: string
   releaseId: string
   paperInsight?: {
-    algorithmVersion: '0.1.0' | '0.2.0'
+    algorithmVersion: '0.1.0' | '0.2.0' | '0.3.0'
     inputSchema:
       | 'brainstem.resting-hrv-methods-cohort/v1'
       | 'brainstem.resting-sample-entropy-cohort/v1'
+      | 'brainstem.sleep-nightly-features-cohort/v1'
       | 'brainstem.overnight-heart-rate-change-cohort/v2'
       | 'brainstem.resting-hrv-repeatability-cohort/v1'
       | 'brainstem.standing-heart-rate-response-cohort/v1'

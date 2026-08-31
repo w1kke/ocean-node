@@ -359,6 +359,69 @@ describe('Private dataset provisioning', () => {
     await expectFailure('private_dataset_contract_invalid')
   })
 
+  it('accepts only the exact seven-night sleep reliability contract', async () => {
+    policy = {
+      ...policy,
+      maxBytes: 256 * 1024,
+      analysisId: 'brainstem.sleep-reliability-benchmark/v1',
+      paperInsight: {
+        algorithmVersion: '0.3.0',
+        inputSchema: 'brainstem.sleep-nightly-features-cohort/v1',
+        candidateManifestSha256:
+          'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073',
+        approvedManifestSha256: 'd'.repeat(64),
+        referenceSha256: null,
+        evidenceTier: 'E0_candidate',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      }
+    }
+    const night = (index: number) => ({
+      schema: 'brainstem.sleep-nightly-features/v1',
+      nightIndex: index,
+      durationSeconds: 18_000,
+      observedIntervalCount: 18_000,
+      acceptedIntervalCount: 18_000,
+      intervalSumMs: 18_000_000,
+      durationCoverageRatio: 1,
+      normalToNormalProvenance: 'unverified',
+      officialMethodInputCompatible: false
+    })
+    const dataset: any = {
+      schema: 'brainstem.sleep-nightly-features-cohort/v1',
+      policy: 'brainstem.full-night-nightly-features/exact-distinct-7/v1',
+      allowedUse: 'aggregate_sleep_reliability_only',
+      sourceType: 'approved_real_cohort',
+      sourceReleaseSha256: 'e'.repeat(64),
+      sourceSnapshotSha256: 'f'.repeat(64),
+      participants: [
+        {
+          subjectId: '1'.repeat(64),
+          referenceProfile: {
+            schema: 'brainstem.reference-profile/v1',
+            referenceYear: 2026,
+            ageBand: '30_44',
+            gender: null,
+            region: null
+          },
+          nights: Array.from({ length: 7 }, (_, index) => night(index + 1))
+        }
+      ]
+    }
+    body = Buffer.from(JSON.stringify(dataset))
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedAnalysisId).to.equal('brainstem.sleep-reliability-benchmark/v1')
+    expect(receivedAlgorithmVersion).to.equal('0.3.0')
+    rmSync(destination)
+
+    const drifted = structuredClone(dataset)
+    Object.assign(drifted.participants[0].nights[0], {
+      recordingDate: '2026-08-31'
+    })
+    body = Buffer.from(JSON.stringify(drifted))
+    await expectFailure('private_dataset_contract_invalid')
+  })
+
   it('accepts the exact expansion cohort contracts', async () => {
     const basePaper = {
       algorithmVersion: '0.1.0' as const,

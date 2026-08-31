@@ -67,7 +67,8 @@ import { decryptFilesObject, omitDBComputeFieldsFromComputeJob } from './index.j
 import {
   readSingleJsonResultArchive,
   validateConsumerResultContract,
-  validateReviewedInsightResult
+  validateReviewedInsightResult,
+  validateSleepReliabilityResult
 } from './consumerResult.js'
 import {
   decideSettlement,
@@ -2862,7 +2863,9 @@ export class C2DEngineDocker extends C2DEngine {
           if (personalPolicy) {
             validatePersonalInsightResult(singleJsonResult, personalPolicy)
           }
-          if (privatePolicy?.paperInsight) {
+          if (privatePolicy?.analysisId === 'brainstem.sleep-reliability-benchmark/v1') {
+            validateSleepReliabilityResult(singleJsonResult, approvedAlgorithmDigest)
+          } else if (privatePolicy?.paperInsight) {
             validateReviewedInsightResult(singleJsonResult, {
               analysisId: privatePolicy.analysisId,
               scope: 'cohort',

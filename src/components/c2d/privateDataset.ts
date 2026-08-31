@@ -25,6 +25,8 @@ const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const SAMPLE_ENTROPY_CANDIDATE_SHA256 =
   '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd'
+const SLEEP_RELIABILITY_CANDIDATE_SHA256 =
+  'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073'
 const OVERNIGHT_CHANGE_CANDIDATE_SHA256 =
   '56e996b4cde15689b7524e7e9427b7fc67dd722d77493fd1daac67d421d90907'
 const MOVEMENT_SCHEMA = 'brainstem.normalized-movement/v1'
@@ -55,6 +57,64 @@ function isGuidedBreathingProtocol(value: unknown): boolean {
     protocol.ip === 0 &&
     protocol.eh === 5 &&
     protocol.ep === 0
+  )
+}
+
+function isSleepNight(value: unknown, index: number, withSchema: boolean): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const night = value as Record<string, unknown>
+  return (
+    (!withSchema || night.schema === 'brainstem.sleep-nightly-features/v1') &&
+    night.nightIndex === index + 1 &&
+    Number.isInteger(night.durationSeconds) &&
+    (night.durationSeconds as number) >= 18_000 &&
+    (night.durationSeconds as number) <= 43_200 &&
+    Number.isInteger(night.observedIntervalCount) &&
+    Number.isInteger(night.acceptedIntervalCount) &&
+    (night.acceptedIntervalCount as number) >= 9_000 &&
+    (night.acceptedIntervalCount as number) <= (night.observedIntervalCount as number) &&
+    (night.acceptedIntervalCount as number) / (night.observedIntervalCount as number) >=
+      0.95 &&
+    typeof night.intervalSumMs === 'number' &&
+    Number.isFinite(night.intervalSumMs) &&
+    (night.intervalSumMs as number) >= 250 * (night.acceptedIntervalCount as number) &&
+    (night.intervalSumMs as number) <= 2_000 * (night.acceptedIntervalCount as number) &&
+    typeof night.durationCoverageRatio === 'number' &&
+    Number.isFinite(night.durationCoverageRatio) &&
+    night.durationCoverageRatio >= 0.9 &&
+    night.durationCoverageRatio <= 1.1 &&
+    Math.abs(
+      night.durationCoverageRatio -
+        (night.intervalSumMs as number) / 1000 / (night.durationSeconds as number)
+    ) <= 0.000001 &&
+    night.normalToNormalProvenance === 'unverified' &&
+    night.officialMethodInputCompatible === false
+  )
+}
+
+function isReferenceProfile(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const profile = value as Record<string, unknown>
+  return (
+    Object.keys(profile).sort().join(',') ===
+      'ageBand,gender,referenceYear,region,schema' &&
+    profile.schema === 'brainstem.reference-profile/v1' &&
+    profile.referenceYear === 2026 &&
+    [null, 'under_30', '30_44', '45_59', '60_plus'].includes(
+      profile.ageBand as string | null
+    ) &&
+    [null, 'female', 'male'].includes(profile.gender as string | null) &&
+    [
+      null,
+      'North America',
+      'Europe',
+      'South East Asia',
+      'East Asia',
+      'Middle East',
+      'South America',
+      'Central Asia',
+      'Other'
+    ].includes(profile.region as string | null)
   )
 }
 
@@ -106,6 +166,20 @@ export function assertPrivateDatasetConfiguration(
       !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
       !SHA256.test(policy.paperInsight.referenceSha256) ||
       policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.sleep-reliability-benchmark/v1' &&
+    (policy.paperInsight?.algorithmVersion !== '0.3.0' ||
+      policy.paperInsight.inputSchema !== 'brainstem.sleep-nightly-features-cohort/v1' ||
+      policy.paperInsight.candidateManifestSha256 !==
+        SLEEP_RELIABILITY_CANDIDATE_SHA256 ||
+      !SHA256.test(policy.paperInsight.approvedManifestSha256) ||
+      policy.paperInsight.referenceSha256 !== null ||
+      policy.paperInsight.evidenceTier !== 'E0_candidate' ||
       policy.paperInsight.useClass !== 'methods_only' ||
       policy.paperInsight.clinicalUse !== 'prohibited')
   ) {
@@ -284,6 +358,8 @@ function validateReviewedCohortInput(
     const overnight =
       policy.paperInsight.inputSchema ===
       'brainstem.overnight-heart-rate-change-cohort/v2'
+    const sleepReliability =
+      policy.paperInsight.inputSchema === 'brainstem.sleep-nightly-features-cohort/v1'
     const repeatability =
       policy.paperInsight.inputSchema === 'brainstem.resting-hrv-repeatability-cohort/v1'
     const standing =
@@ -299,12 +375,21 @@ function validateReviewedCohortInput(
           ? 'allowedUse,participants,policy,protocol,schema,sourceType'
           : overnight
             ? 'allowedUse,movementSchema,movementThresholdMilliG,participants,policy,schema,sourceType'
-            : repeatability || standing
-              ? 'allowedUse,participants,policy,schema,sourceType'
-              : 'participants,schema') ||
+            : sleepReliability
+              ? 'allowedUse,participants,policy,schema,sourceReleaseSha256,sourceSnapshotSha256,sourceType'
+              : repeatability || standing
+                ? 'allowedUse,participants,policy,schema,sourceType'
+                : 'participants,schema') ||
       dataset.schema !== policy.paperInsight.inputSchema ||
-      ((overnight || repeatability || standing || guidedBreathing) &&
+      ((overnight || sleepReliability || repeatability || standing || guidedBreathing) &&
         dataset.sourceType !== 'approved_real_cohort') ||
+      (sleepReliability &&
+        (dataset.policy !== 'brainstem.full-night-nightly-features/exact-distinct-7/v1' ||
+          dataset.allowedUse !== 'aggregate_sleep_reliability_only' ||
+          typeof dataset.sourceReleaseSha256 !== 'string' ||
+          !SHA256.test(dataset.sourceReleaseSha256) ||
+          typeof dataset.sourceSnapshotSha256 !== 'string' ||
+          !SHA256.test(dataset.sourceSnapshotSha256))) ||
       (overnight &&
         (dataset.policy !==
           'brainstem.overnight-heart-rate-change-cohort/distinct-9-movement/v2' ||
@@ -323,7 +408,7 @@ function validateReviewedCohortInput(
           dataset.allowedUse !== 'aggregate_guided_breathing_response_only' ||
           !isGuidedBreathingProtocol(dataset.protocol))) ||
       !Array.isArray(dataset.participants) ||
-      dataset.participants.length > 1000
+      dataset.participants.length > (sleepReliability ? 100 : 1000)
     ) {
       throw new Error('invalid dataset')
     }
@@ -331,30 +416,54 @@ function validateReviewedCohortInput(
     const sampleEntropy =
       policy.paperInsight.inputSchema === 'brainstem.resting-sample-entropy-cohort/v1'
     for (const participant of dataset.participants) {
-      const values = overnight ? participant?.nights : participant?.recordings
+      const values =
+        overnight || sleepReliability ? participant?.nights : participant?.recordings
       if (
         !participant ||
         Array.isArray(participant) ||
         Object.keys(participant).sort().join(',') !==
-          (overnight ? 'nights,subjectId' : 'recordings,subjectId') ||
+          (sleepReliability
+            ? 'nights,referenceProfile,subjectId'
+            : overnight
+              ? 'nights,subjectId'
+              : 'recordings,subjectId') ||
         typeof participant.subjectId !== 'string' ||
         !SHA256.test(participant.subjectId) ||
         subjects.has(participant.subjectId) ||
         !Array.isArray(values) ||
         values.length < 1 ||
         values.length >
-          (overnight
-            ? 9
-            : repeatability || standing || guidedBreathing
-              ? 7
-              : sampleEntropy
-                ? 1
-                : 16) ||
-        ((overnight || repeatability) && values.length !== (overnight ? 9 : 7))
+          (sleepReliability
+            ? 7
+            : overnight
+              ? 9
+              : repeatability || standing || guidedBreathing
+                ? 7
+                : sampleEntropy
+                  ? 1
+                  : 16) ||
+        ((overnight || sleepReliability || repeatability) &&
+          values.length !== (overnight ? 9 : 7)) ||
+        (sleepReliability && !isReferenceProfile(participant.referenceProfile))
       ) {
         throw new Error('invalid participant')
       }
       subjects.add(participant.subjectId)
+      if (sleepReliability) {
+        for (let index = 0; index < values.length; index += 1) {
+          const night = values[index]
+          if (
+            !night ||
+            Array.isArray(night) ||
+            Object.keys(night).sort().join(',') !==
+              'acceptedIntervalCount,durationCoverageRatio,durationSeconds,intervalSumMs,nightIndex,normalToNormalProvenance,observedIntervalCount,officialMethodInputCompatible,schema' ||
+            !isSleepNight(night, index, true)
+          ) {
+            throw new Error('invalid night')
+          }
+        }
+        continue
+      }
       if (overnight) {
         for (let index = 0; index < values.length; index += 1) {
           const night = values[index]
@@ -363,25 +472,7 @@ function validateReviewedCohortInput(
             Array.isArray(night) ||
             Object.keys(night).sort().join(',') !==
               'acceptedIntervalCount,alignedHeartRateSampleFraction,durationCoverageRatio,durationSeconds,intervalSumMs,movementCoverageFraction,movementEventCount,movementEventRatePerHour,movementMeanHeartRateBpm,nightIndex,normalToNormalProvenance,observedIntervalCount,officialMethodInputCompatible,quietMeanHeartRateBpm,quietWindowProportion' ||
-            night.nightIndex !== index + 1 ||
-            !Number.isInteger(night.durationSeconds) ||
-            night.durationSeconds < 18_000 ||
-            night.durationSeconds > 43_200 ||
-            !Number.isInteger(night.observedIntervalCount) ||
-            !Number.isInteger(night.acceptedIntervalCount) ||
-            night.acceptedIntervalCount < 9_000 ||
-            night.acceptedIntervalCount > night.observedIntervalCount ||
-            night.acceptedIntervalCount / night.observedIntervalCount < 0.95 ||
-            typeof night.intervalSumMs !== 'number' ||
-            !Number.isFinite(night.intervalSumMs) ||
-            typeof night.durationCoverageRatio !== 'number' ||
-            !Number.isFinite(night.durationCoverageRatio) ||
-            night.durationCoverageRatio < 0.9 ||
-            night.durationCoverageRatio > 1.1 ||
-            Math.abs(
-              night.durationCoverageRatio -
-                night.intervalSumMs / 1000 / night.durationSeconds
-            ) > 0.000001 ||
+            !isSleepNight(night, index, false) ||
             typeof night.movementCoverageFraction !== 'number' ||
             !Number.isFinite(night.movementCoverageFraction) ||
             night.movementCoverageFraction < 0.8 ||

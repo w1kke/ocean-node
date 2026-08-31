@@ -296,6 +296,7 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.resting-rr-cohort-summary/v1',
           'brainstem.resting-hrv-methods/v1',
           'brainstem.resting-rr-sample-entropy/v1',
+          'brainstem.sleep-reliability-benchmark/v1',
           'brainstem.overnight-heart-rate-change/v1',
           'brainstem.resting-hrv-repeatability/v1',
           'brainstem.standing-heart-rate-response/v1',
@@ -320,10 +321,11 @@ export const C2DEnvironmentConfigSchema = z
         releaseId: z.string().regex(/^[0-9a-f]{64}$/),
         paperInsight: z
           .object({
-            algorithmVersion: z.enum(['0.1.0', '0.2.0']),
+            algorithmVersion: z.enum(['0.1.0', '0.2.0', '0.3.0']),
             inputSchema: z.enum([
               'brainstem.resting-hrv-methods-cohort/v1',
               'brainstem.resting-sample-entropy-cohort/v1',
+              'brainstem.sleep-nightly-features-cohort/v1',
               'brainstem.overnight-heart-rate-change-cohort/v2',
               'brainstem.resting-hrv-repeatability-cohort/v1',
               'brainstem.standing-heart-rate-response-cohort/v1',
@@ -385,6 +387,18 @@ export const C2DEnvironmentConfigSchema = z
                 'brainstem.resting-sample-entropy-cohort/v1' &&
               policy.paperInsight.candidateManifestSha256 ===
                 '65002ab13f02f812c611085c0295b81dc90ec7ffacc79f9ff4927e81e9070bdd' &&
+              policy.participantValue === undefined
+            )
+          }
+          if (policy.analysisId === 'brainstem.sleep-reliability-benchmark/v1') {
+            return (
+              policy.paperInsight?.algorithmVersion === '0.3.0' &&
+              policy.paperInsight.inputSchema ===
+                'brainstem.sleep-nightly-features-cohort/v1' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073' &&
+              policy.paperInsight.referenceSha256 === null &&
+              policy.paperInsight.evidenceTier === 'E0_candidate' &&
               policy.participantValue === undefined
             )
           }
@@ -788,9 +802,11 @@ export const C2DEnvironmentConfigSchema = z
       (data.enableNetwork === false &&
         data.consumerResultPolicy.mode === 'singleJson' &&
         data.consumerResultPolicy.resultContract ===
-          (data.privateDataset.paperInsight
-            ? 'brainstem.insight-result/v1'
-            : 'brainstem.c2d-result/v1') &&
+          (data.privateDataset.analysisId === 'brainstem.sleep-reliability-benchmark/v1'
+            ? 'brainstem.c2d-result/v1'
+            : data.privateDataset.paperInsight
+              ? 'brainstem.insight-result/v1'
+              : 'brainstem.c2d-result/v1') &&
         data.free?.allowImageBuild !== true),
     {
       message:

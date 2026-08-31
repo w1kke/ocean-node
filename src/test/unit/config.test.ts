@@ -195,6 +195,49 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: sampleEntropy
       }).success
     ).to.equal(true)
+    const sleepReliability = {
+      ...reviewedMethods,
+      analysisId: 'brainstem.sleep-reliability-benchmark/v1',
+      paperInsight: {
+        ...reviewedMethods.paperInsight,
+        algorithmVersion: '0.3.0',
+        inputSchema: 'brainstem.sleep-nightly-features-cohort/v1',
+        candidateManifestSha256:
+          'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073',
+        referenceSha256: null as null,
+        evidenceTier: 'E0_candidate'
+      }
+    }
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: sleepReliability
+      }).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...baseEnvironment,
+        storageExpiry: 14 * 24 * 60 * 60,
+        consumerResultPolicy: {
+          mode: 'singleJson',
+          maxBytes: 262144,
+          resultContract: 'brainstem.c2d-result/v1'
+        },
+        privateDataset: {
+          ...sleepReliability,
+          paperInsight: {
+            ...sleepReliability.paperInsight,
+            algorithmVersion: '0.2.0'
+          }
+        }
+      }).success
+    ).to.equal(false)
     const standingResponse = {
       ...reviewedMethods,
       analysisId: 'brainstem.standing-heart-rate-response/v1',

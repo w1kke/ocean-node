@@ -1,5 +1,6 @@
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'node:stream/promises'
+import { createHash } from 'node:crypto'
 import * as tarStream from 'tar-stream'
 import { z } from 'zod'
 import type {
@@ -137,6 +138,185 @@ const provenance = z
     generatedAt: z.string().max(40).datetime({ offset: true })
   })
   .strict()
+const reliabilityEstimate = z
+  .object({
+    unit: z.enum(['hours', 'bpm']),
+    p10: z.number().finite(),
+    p25: z.number().finite(),
+    p50: z.number().finite(),
+    p75: z.number().finite(),
+    p90: z.number().finite(),
+    icc11: z.number().finite().min(-1).max(1),
+    icc11Ci95: z.tuple([
+      z.number().finite().min(-1).max(1),
+      z.number().finite().min(-1).max(1)
+    ]),
+    meanReliabilityByNights: z
+      .array(
+        z
+          .object({
+            nights: z.number().int().min(1).max(7),
+            estimate: z.number().finite().min(-1).max(1),
+            ci95: z.tuple([
+              z.number().finite().min(-1).max(1),
+              z.number().finite().min(-1).max(1)
+            ])
+          })
+          .strict()
+      )
+      .length(7),
+    minimumNightsForLowerCi80: z.union([
+      z.number().int().min(1).max(7),
+      z.literal('not_established_within_7')
+    ]),
+    medianWithinPersonCvPercent: z.number().finite().min(0),
+    medianWithinPersonCvPercentCi95: z.tuple([
+      z.number().finite().min(0),
+      z.number().finite().min(0)
+    ])
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      !(
+        value.p10 <= value.p25 &&
+        value.p25 <= value.p50 &&
+        value.p50 <= value.p75 &&
+        value.p75 <= value.p90
+      ) ||
+      value.icc11Ci95[0] > value.icc11Ci95[1] ||
+      value.medianWithinPersonCvPercentCi95[0] >
+        value.medianWithinPersonCvPercentCi95[1] ||
+      value.meanReliabilityByNights.some(
+        (item, index) => item.nights !== index + 1 || item.ci95[0] > item.ci95[1]
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sleep reliability estimates are inconsistent'
+      })
+    }
+  })
+const reliabilityBands = z
+  .object({
+    durationHours: z.tuple([z.number().finite(), z.number().finite()]),
+    sleepingRateBpm: z.tuple([z.number().finite(), z.number().finite()]),
+    acceptedPercent: z.tuple([z.number().finite(), z.number().finite()])
+  })
+  .strict()
+const sleepReliabilityReference = z
+  .object({
+    schema: z.literal('brainstem.sleep-reliability-reference/v1'),
+    version: z.enum(['generated-review-candidate-v1', 'review-required-v1']),
+    analysisId: z.literal('brainstem.sleep-baseline/v2'),
+    sourceType: z.enum(['generated_fixture', 'approved_real_cohort']),
+    sourceReleaseSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    sourceSnapshotSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    inclusionContract: z.literal(
+      'brainstem.full-night-nightly-features/exact-distinct-7/v1'
+    ),
+    algorithmVersion: z.literal('0.3.0'),
+    algorithmImageDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    candidateManifestSha256: z.literal(
+      'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073'
+    ),
+    referenceYear: z.literal(2026),
+    minimumParticipants: z.literal(20),
+    ageBands: z.tuple([
+      z.literal('under_30'),
+      z.literal('30_44'),
+      z.literal('45_59'),
+      z.literal('60_plus')
+    ]),
+    reliability: z
+      .object({
+        durationHours: reliabilityEstimate,
+        sleepingRateBpm: reliabilityEstimate
+      })
+      .strict(),
+    scopes: z
+      .array(
+        z
+          .object({
+            scopeId: z.string().regex(/^[0-9a-f]{64}$/),
+            dimensions: z.array(z.enum(['ageBand', 'gender', 'region'])).max(3),
+            participantCountBand: z.enum(['20 to 49', '50 to 99', '100 or more']),
+            bands: reliabilityBands
+          })
+          .strict()
+      )
+      .min(1)
+      .max(64),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/)
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const scopeIds = new Set(value.scopes.map((scope) => scope.scopeId))
+    if (
+      scopeIds.size !== value.scopes.length ||
+      !value.scopes.some((scope) => scope.dimensions.length === 0) ||
+      value.scopes.some((scope) =>
+        Object.values(scope.bands).some(([low, high]) => low > high)
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sleep reliability reference scopes are inconsistent'
+      })
+    }
+  })
+const sleepReliabilityResult = z
+  .object({
+    schema: z.literal('brainstem.c2d-result/v1'),
+    status: z.enum(['complete', 'insufficient_data']),
+    title: plainText(160),
+    summary: plainText(1000),
+    metrics: z.array(metric).max(12),
+    charts: z.array(chart).max(8),
+    table: table.nullable(),
+    warnings: z.array(plainText(500)).max(8),
+    provenance: z
+      .object({
+        analysisId: z.literal('brainstem.sleep-reliability-benchmark/v1'),
+        algorithmVersion: z.literal('0.3.0'),
+        algorithmImageDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+        candidateManifestSha256: z.literal(
+          'b9bcc30891ffa7368f6169947b9aea9e2bb968a4a4db56287bd1ffde98d94073'
+        ),
+        datasetSchemaVersion: z.literal('brainstem.sleep-nightly-features-cohort/v1'),
+        selectorPolicy: z.literal(
+          'brainstem.full-night-nightly-features/exact-distinct-7/v1'
+        ),
+        generatedAt: z.string().max(40).datetime({ offset: true }),
+        estimator: z.literal(
+          'ICC(1,1) balanced one-way random-effects absolute agreement'
+        ),
+        bootstrap: z.literal('10000 deterministic participant-level resamples'),
+        referenceSha256: z
+          .string()
+          .regex(/^[0-9a-f]{64}$/)
+          .optional()
+      })
+      .strict(),
+    reference: sleepReliabilityReference.nullable()
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const hasResult = value.metrics.length > 0 || value.charts.length > 0 || value.table
+    if (
+      (value.status === 'complete' &&
+        (!hasResult ||
+          !value.reference ||
+          value.provenance.referenceSha256 !== value.reference.sha256)) ||
+      (value.status !== 'complete' &&
+        (hasResult || value.reference !== null || value.provenance.referenceSha256))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'sleep reliability result status is inconsistent'
+      })
+    }
+  })
 const brainstemResult = z
   .object({
     schema: z.literal('brainstem.c2d-result/v1'),
@@ -288,7 +468,7 @@ export function validateConsumerResultContract(
   const result =
     policy.resultContract === 'brainstem.insight-result/v1'
       ? insightResult.safeParse(value)
-      : brainstemResult.safeParse(value)
+      : z.union([brainstemResult, sleepReliabilityResult]).safeParse(value)
   if (!result.success) {
     throw new Error(`result.json does not match ${policy.resultContract}`)
   }
@@ -305,6 +485,49 @@ export function validateConsumerResultContract(
     algorithmVersion: result.data.provenance.algorithmVersion,
     algorithmImageDigest: result.data.provenance.algorithmImageDigest,
     datasetSchemaVersion: result.data.provenance.datasetSchemaVersion
+  }
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+export function validateSleepReliabilityResult(
+  bytes: Buffer,
+  expectedImageDigest: string
+): void {
+  let value: unknown
+  try {
+    value = JSON.parse(bytes.toString('utf8'))
+  } catch {
+    throw new Error('result.json is not valid JSON')
+  }
+  const parsed = sleepReliabilityResult.safeParse(value)
+  if (!parsed.success) {
+    throw new Error('result.json does not match the sleep reliability policy')
+  }
+  if (
+    parsed.data.provenance.algorithmImageDigest !== expectedImageDigest ||
+    (parsed.data.reference &&
+      parsed.data.reference.algorithmImageDigest !== expectedImageDigest)
+  ) {
+    throw new Error('result.json algorithm digest does not match execution')
+  }
+  if (parsed.data.reference) {
+    const { sha256, ...reference } = parsed.data.reference
+    const actual = createHash('sha256')
+      .update(`${canonicalJson(reference)}\n`)
+      .digest('hex')
+    if (actual !== sha256) {
+      throw new Error('result.json reference digest is invalid')
+    }
   }
 }
 
