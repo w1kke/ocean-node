@@ -128,6 +128,8 @@ export interface PrivateDatasetPolicy {
     | 'brainstem.resting-hrv-repeatability/v1'
     | 'brainstem.standing-heart-rate-response/v1'
     | 'brainstem.guided-breathing-response/v1'
+    | 'brainstem.standing-heart-rate-response/v2'
+    | 'brainstem.guided-breathing-response/v2'
   url: string
   maxBytes: number
   approvedAlgorithmImage: string
@@ -150,6 +152,8 @@ export interface PrivateDatasetPolicy {
       | 'brainstem.resting-hrv-repeatability-cohort/v1'
       | 'brainstem.standing-heart-rate-response-cohort/v1'
       | 'brainstem.guided-breathing-response-cohort/v1'
+      | 'brainstem.standing-heart-rate-response-cohort/v2'
+      | 'brainstem.guided-breathing-response-cohort/v2'
     candidateManifestSha256: string
     approvedManifestSha256: string
     referenceSha256: string | null
@@ -183,6 +187,8 @@ export interface PersonalInsightPolicy {
     | 'brainstem.resting-hrv-repeatability/v1'
     | 'brainstem.standing-heart-rate-response/v1'
     | 'brainstem.guided-breathing-response/v1'
+    | 'brainstem.standing-heart-rate-response/v2'
+    | 'brainstem.guided-breathing-response/v2'
   algorithmVersion: '1.0.0' | '0.1.0' | '0.2.0'
   crabUrl: string
   approvedAlgorithmImage: string
@@ -208,6 +214,8 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-hrv-repeatability/v1'
     | 'brainstem.personal-standing-heart-rate-response/v1'
     | 'brainstem.personal-guided-breathing-response/v1'
+    | 'brainstem.personal-standing-heart-rate-response/v2'
+    | 'brainstem.personal-guided-breathing-response/v2'
   inputPolicy:
     | 'brainstem.personal-resting-rr/latest-16/v1'
     | 'brainstem.personal-resting-hrv-methods/latest-16/v1'
@@ -218,6 +226,8 @@ export interface PersonalInsightPolicy {
     | 'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1'
     | 'brainstem.personal-standing-heart-rate-response/latest-7/v1'
     | 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1'
+    | 'brainstem.personal-standing-heart-rate-response/latest-7/v2'
+    | 'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2'
   resultContract: 'brainstem.c2d-result/v1' | 'brainstem.insight-result/v1'
   resultProfile:
     | 'brainstem.personal-resting-heart-overview/v1'
@@ -229,6 +239,8 @@ export interface PersonalInsightPolicy {
     | 'brainstem.resting-hrv-repeatability-personal/v1'
     | 'brainstem.standing-heart-rate-response-personal/v1'
     | 'brainstem.guided-breathing-response-personal/v1'
+    | 'brainstem.standing-heart-rate-response-personal/v2'
+    | 'brainstem.guided-breathing-response-personal/v2'
   audience: 'brainstem-ocean-node'
   maximumRecordings: 4 | 7 | 9 | 16
   maxInputBytes: number

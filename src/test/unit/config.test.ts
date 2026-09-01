@@ -347,6 +347,51 @@ describe('Should require an explicit consumer result policy', () => {
         privateDataset: guidedBreathing
       }).success
     ).to.equal(true)
+    const standingResponseV2 = {
+      ...standingResponse,
+      analysisId: 'brainstem.standing-heart-rate-response/v2',
+      study: reviewedStudy.study,
+      paperInsight: {
+        ...standingResponse.paperInsight,
+        algorithmVersion: '0.2.0',
+        inputSchema: 'brainstem.standing-heart-rate-response-cohort/v2',
+        candidateManifestSha256:
+          '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa',
+        approvedManifestSha256:
+          '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0',
+        referenceSha256:
+          '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb'
+      }
+    }
+    const v2Environment = {
+      ...baseEnvironment,
+      storageExpiry: 14 * 24 * 60 * 60,
+      consumerResultPolicy: {
+        mode: 'singleJson',
+        maxBytes: 262144,
+        resultContract: 'brainstem.insight-result/v1'
+      },
+      privateDataset: standingResponseV2
+    }
+    expect(C2DEnvironmentConfigSchema.safeParse(v2Environment).success).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...v2Environment,
+        privateDataset: { ...standingResponseV2, study: undefined }
+      }).success
+    ).to.equal(false)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse({
+        ...v2Environment,
+        privateDataset: {
+          ...standingResponseV2,
+          paperInsight: {
+            ...standingResponseV2.paperInsight,
+            approvedManifestSha256: '0'.repeat(64)
+          }
+        }
+      }).success
+    ).to.equal(false)
     expect(
       C2DEnvironmentConfigSchema.safeParse({
         ...baseEnvironment,

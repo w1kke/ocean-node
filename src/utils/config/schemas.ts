@@ -301,7 +301,9 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.overnight-heart-rate-change/v1',
           'brainstem.resting-hrv-repeatability/v1',
           'brainstem.standing-heart-rate-response/v1',
-          'brainstem.guided-breathing-response/v1'
+          'brainstem.guided-breathing-response/v1',
+          'brainstem.standing-heart-rate-response/v2',
+          'brainstem.guided-breathing-response/v2'
         ]),
         url: z
           .string()
@@ -340,7 +342,9 @@ export const C2DEnvironmentConfigSchema = z
               'brainstem.overnight-heart-rate-change-cohort/v2',
               'brainstem.resting-hrv-repeatability-cohort/v1',
               'brainstem.standing-heart-rate-response-cohort/v1',
-              'brainstem.guided-breathing-response-cohort/v1'
+              'brainstem.guided-breathing-response-cohort/v1',
+              'brainstem.standing-heart-rate-response-cohort/v2',
+              'brainstem.guided-breathing-response-cohort/v2'
             ]),
             candidateManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
             approvedManifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
@@ -471,6 +475,42 @@ export const C2DEnvironmentConfigSchema = z
               policy.participantValue === undefined
             )
           }
+          if (policy.analysisId === 'brainstem.standing-heart-rate-response/v2') {
+            return (
+              policy.study !== undefined &&
+              policy.study.resultBearerTokenEnv !== policy.bearerTokenEnv &&
+              policy.paperInsight?.algorithmVersion === '0.2.0' &&
+              policy.paperInsight.inputSchema ===
+                'brainstem.standing-heart-rate-response-cohort/v2' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa' &&
+              policy.paperInsight.approvedManifestSha256 ===
+                '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0' &&
+              policy.paperInsight.referenceSha256 ===
+                '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb' &&
+              policy.paperInsight.evidenceTier ===
+                'E2_brainstem_compatible_exploratory' &&
+              policy.participantValue === undefined
+            )
+          }
+          if (policy.analysisId === 'brainstem.guided-breathing-response/v2') {
+            return (
+              policy.study !== undefined &&
+              policy.study.resultBearerTokenEnv !== policy.bearerTokenEnv &&
+              policy.paperInsight?.algorithmVersion === '0.2.0' &&
+              policy.paperInsight.inputSchema ===
+                'brainstem.guided-breathing-response-cohort/v2' &&
+              policy.paperInsight.candidateManifestSha256 ===
+                '37448779b23897895c535e89ecc2c91fe25c588a0bcab533ed34a94a0ec2a039' &&
+              policy.paperInsight.approvedManifestSha256 ===
+                '0756610a32d48784d8ed3b7367bf164865b27aa1fe1a05517052b2b3dd292cb8' &&
+              policy.paperInsight.referenceSha256 ===
+                '79090c71b0e219a6bb6b940bdcb251e2cfa3e9630a30de7534694e9caef8b2ec' &&
+              policy.paperInsight.evidenceTier ===
+                'E2_brainstem_compatible_exploratory' &&
+              policy.participantValue === undefined
+            )
+          }
           return policy.paperInsight === undefined && policy.study === undefined
         },
         {
@@ -505,7 +545,9 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.overnight-heart-rate-change/v1',
           'brainstem.resting-hrv-repeatability/v1',
           'brainstem.standing-heart-rate-response/v1',
-          'brainstem.guided-breathing-response/v1'
+          'brainstem.guided-breathing-response/v1',
+          'brainstem.standing-heart-rate-response/v2',
+          'brainstem.guided-breathing-response/v2'
         ]),
         algorithmVersion: z.enum(['1.0.0', '0.1.0', '0.2.0']),
         crabUrl: z
@@ -557,7 +599,9 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-overnight-heart-rate-change/v2',
           'brainstem.personal-resting-hrv-repeatability/v1',
           'brainstem.personal-standing-heart-rate-response/v1',
-          'brainstem.personal-guided-breathing-response/v1'
+          'brainstem.personal-guided-breathing-response/v1',
+          'brainstem.personal-standing-heart-rate-response/v2',
+          'brainstem.personal-guided-breathing-response/v2'
         ]),
         inputPolicy: z.enum([
           'brainstem.personal-resting-rr/latest-16/v1',
@@ -568,7 +612,9 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.personal-overnight-heart-rate-change/latest-distinct-9-movement/v2',
           'brainstem.personal-resting-hrv-repeatability/latest-distinct-7/v1',
           'brainstem.personal-standing-heart-rate-response/latest-7/v1',
-          'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1'
+          'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1',
+          'brainstem.personal-standing-heart-rate-response/latest-7/v2',
+          'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2'
         ]),
         resultContract: z.enum([
           'brainstem.c2d-result/v1',
@@ -583,7 +629,9 @@ export const C2DEnvironmentConfigSchema = z
           'brainstem.overnight-heart-rate-change-personal/v2',
           'brainstem.resting-hrv-repeatability-personal/v1',
           'brainstem.standing-heart-rate-response-personal/v1',
-          'brainstem.guided-breathing-response-personal/v1'
+          'brainstem.guided-breathing-response-personal/v1',
+          'brainstem.standing-heart-rate-response-personal/v2',
+          'brainstem.guided-breathing-response-personal/v2'
         ]),
         audience: z.literal('brainstem-ocean-node'),
         maximumRecordings: z.union([
@@ -641,6 +689,10 @@ export const C2DEnvironmentConfigSchema = z
         const standing = policy.analysisId === 'brainstem.standing-heart-rate-response/v1'
         const guidedBreathing =
           policy.analysisId === 'brainstem.guided-breathing-response/v1'
+        const standingV2 =
+          policy.analysisId === 'brainstem.standing-heart-rate-response/v2'
+        const guidedBreathingV2 =
+          policy.analysisId === 'brainstem.guided-breathing-response/v2'
         const exactPolicy = legacy
           ? policy.maximumRecordings === 16 &&
             policy.algorithmVersion === '1.0.0' &&
@@ -704,65 +756,102 @@ export const C2DEnvironmentConfigSchema = z
                     policy.approvedManifestSha256 !== null &&
                     policy.referenceSha256 === null &&
                     policy.evidenceTier === 'E0_candidate'
-                  : guidedBreathing
+                  : standingV2
                     ? policy.maximumRecordings === 7 &&
-                      policy.algorithmVersion === '0.1.0' &&
+                      policy.algorithmVersion === '0.2.0' &&
                       policy.inputSchema ===
-                        'brainstem.personal-guided-breathing-response/v1' &&
+                        'brainstem.personal-standing-heart-rate-response/v2' &&
                       policy.inputPolicy ===
-                        'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1' &&
+                        'brainstem.personal-standing-heart-rate-response/latest-7/v2' &&
                       policy.resultContract === 'brainstem.insight-result/v1' &&
                       policy.resultProfile ===
-                        'brainstem.guided-breathing-response-personal/v1' &&
+                        'brainstem.standing-heart-rate-response-personal/v2' &&
                       policy.candidateManifestSha256 ===
-                        'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d' &&
-                      policy.approvedManifestSha256 !== null &&
+                        '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa' &&
+                      policy.approvedManifestSha256 ===
+                        '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0' &&
                       policy.referenceSha256 ===
-                        '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232' &&
+                        '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb' &&
                       policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
-                    : sleepBaselineV2
-                      ? policy.maximumRecordings === 9 &&
-                        policy.algorithmVersion === '0.1.0' &&
+                    : guidedBreathingV2
+                      ? policy.maximumRecordings === 7 &&
+                        policy.algorithmVersion === '0.2.0' &&
                         policy.inputSchema ===
-                          'brainstem.personal-sleep-nightly-features/v1' &&
+                          'brainstem.personal-guided-breathing-response/v2' &&
                         policy.inputPolicy ===
-                          'brainstem.personal-sleep-baseline/latest-distinct-9/v2' &&
+                          'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2' &&
                         policy.resultContract === 'brainstem.insight-result/v1' &&
-                        policy.resultProfile === 'brainstem.sleep-baseline-personal/v2' &&
+                        policy.resultProfile ===
+                          'brainstem.guided-breathing-response-personal/v2' &&
                         policy.candidateManifestSha256 ===
-                          '81ebd09121c902835a37c3100ea301c85775614e68230135b21b0c6fa43b9a16' &&
-                        policy.approvedManifestSha256 !== null &&
+                          '37448779b23897895c535e89ecc2c91fe25c588a0bcab533ed34a94a0ec2a039' &&
+                        policy.approvedManifestSha256 ===
+                          '0756610a32d48784d8ed3b7367bf164865b27aa1fe1a05517052b2b3dd292cb8' &&
                         policy.referenceSha256 ===
-                          '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235' &&
+                          '79090c71b0e219a6bb6b940bdcb251e2cfa3e9630a30de7534694e9caef8b2ec' &&
                         policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
-                      : standing
+                      : guidedBreathing
                         ? policy.maximumRecordings === 7 &&
                           policy.algorithmVersion === '0.1.0' &&
                           policy.inputSchema ===
-                            'brainstem.personal-standing-heart-rate-response/v1' &&
+                            'brainstem.personal-guided-breathing-response/v1' &&
                           policy.inputPolicy ===
-                            'brainstem.personal-standing-heart-rate-response/latest-7/v1' &&
+                            'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v1' &&
                           policy.resultContract === 'brainstem.insight-result/v1' &&
                           policy.resultProfile ===
-                            'brainstem.standing-heart-rate-response-personal/v1' &&
+                            'brainstem.guided-breathing-response-personal/v1' &&
                           policy.candidateManifestSha256 ===
-                            'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217' &&
+                            'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d' &&
                           policy.approvedManifestSha256 !== null &&
                           policy.referenceSha256 ===
-                            'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979' &&
+                            '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232' &&
                           policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
-                        : policy.maximumRecordings === 7 &&
-                          policy.algorithmVersion === '0.2.0' &&
-                          policy.inputSchema === 'brainstem.personal-sleep-baseline/v2' &&
-                          policy.inputPolicy ===
-                            'brainstem.personal-sleep-baseline/latest-7/v2' &&
-                          policy.resultContract === 'brainstem.insight-result/v1' &&
-                          policy.resultProfile ===
-                            'brainstem.sleep-baseline-personal/v1' &&
-                          policy.candidateManifestSha256 ===
-                            'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9' &&
-                          policy.approvedManifestSha256 !== null &&
-                          policy.referenceSha256 !== null
+                        : sleepBaselineV2
+                          ? policy.maximumRecordings === 9 &&
+                            policy.algorithmVersion === '0.1.0' &&
+                            policy.inputSchema ===
+                              'brainstem.personal-sleep-nightly-features/v1' &&
+                            policy.inputPolicy ===
+                              'brainstem.personal-sleep-baseline/latest-distinct-9/v2' &&
+                            policy.resultContract === 'brainstem.insight-result/v1' &&
+                            policy.resultProfile ===
+                              'brainstem.sleep-baseline-personal/v2' &&
+                            policy.candidateManifestSha256 ===
+                              '81ebd09121c902835a37c3100ea301c85775614e68230135b21b0c6fa43b9a16' &&
+                            policy.approvedManifestSha256 !== null &&
+                            policy.referenceSha256 ===
+                              '9eab9cb0cbddee8305b04c1d7cc41133193465c553c5e49d1b24942ab073b235' &&
+                            policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
+                          : standing
+                            ? policy.maximumRecordings === 7 &&
+                              policy.algorithmVersion === '0.1.0' &&
+                              policy.inputSchema ===
+                                'brainstem.personal-standing-heart-rate-response/v1' &&
+                              policy.inputPolicy ===
+                                'brainstem.personal-standing-heart-rate-response/latest-7/v1' &&
+                              policy.resultContract === 'brainstem.insight-result/v1' &&
+                              policy.resultProfile ===
+                                'brainstem.standing-heart-rate-response-personal/v1' &&
+                              policy.candidateManifestSha256 ===
+                                'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217' &&
+                              policy.approvedManifestSha256 !== null &&
+                              policy.referenceSha256 ===
+                                'ffba0c6772fba94d5a18ec130cd5d0b080cb4f819d8c3fc4034a2b2dfd578979' &&
+                              policy.evidenceTier ===
+                                'E2_brainstem_compatible_exploratory'
+                            : policy.maximumRecordings === 7 &&
+                              policy.algorithmVersion === '0.2.0' &&
+                              policy.inputSchema ===
+                                'brainstem.personal-sleep-baseline/v2' &&
+                              policy.inputPolicy ===
+                                'brainstem.personal-sleep-baseline/latest-7/v2' &&
+                              policy.resultContract === 'brainstem.insight-result/v1' &&
+                              policy.resultProfile ===
+                                'brainstem.sleep-baseline-personal/v1' &&
+                              policy.candidateManifestSha256 ===
+                                'bb270d52974bd51d5c2e62f53b5215b057b274afa0c57b1a280a98ddf8d8a7c9' &&
+                              policy.approvedManifestSha256 !== null &&
+                              policy.referenceSha256 !== null
         if (!exactPolicy) {
           context.addIssue({
             code: z.ZodIssueCode.custom,

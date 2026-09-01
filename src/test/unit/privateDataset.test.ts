@@ -592,16 +592,16 @@ describe('Private dataset provisioning', () => {
       sourceReleaseSha256: 'e'.repeat(64),
       sourceSnapshotSha256: 'f'.repeat(64),
       participants: twenty({
-          subjectId: '1'.repeat(64),
-          referenceProfile: {
-            schema: 'brainstem.reference-profile/v1',
-            referenceYear: 2026,
-            ageBand: '30_44',
-            gender: null,
-            region: null
-          },
-          nights: Array.from({ length: 7 }, (_, index) => night(index + 1))
-        })
+        subjectId: '1'.repeat(64),
+        referenceProfile: {
+          schema: 'brainstem.reference-profile/v1',
+          referenceYear: 2026,
+          ageBand: '30_44',
+          gender: null,
+          region: null
+        },
+        nights: Array.from({ length: 7 }, (_, index) => night(index + 1))
+      })
     }
     body = Buffer.from(JSON.stringify(dataset))
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
@@ -647,25 +647,25 @@ describe('Private dataset provisioning', () => {
         movementSchema: 'brainstem.normalized-movement/v1',
         movementThresholdMilliG: 100,
         participants: twenty({
-            subjectId: '1'.repeat(64),
-            nights: Array.from({ length: 9 }, (_, index) => ({
-              nightIndex: index + 1,
-              durationSeconds: 18000,
-              observedIntervalCount: 18000,
-              acceptedIntervalCount: 18000,
-              intervalSumMs: 18000000,
-              durationCoverageRatio: 1,
-              movementCoverageFraction: 1,
-              alignedHeartRateSampleFraction: 1,
-              movementEventCount: 10,
-              movementEventRatePerHour: 2,
-              quietWindowProportion: 0.9,
-              quietMeanHeartRateBpm: 60,
-              movementMeanHeartRateBpm: 72,
-              normalToNormalProvenance: 'unverified',
-              officialMethodInputCompatible: false
-            }))
-          })
+          subjectId: '1'.repeat(64),
+          nights: Array.from({ length: 9 }, (_, index) => ({
+            nightIndex: index + 1,
+            durationSeconds: 18000,
+            observedIntervalCount: 18000,
+            acceptedIntervalCount: 18000,
+            intervalSumMs: 18000000,
+            durationCoverageRatio: 1,
+            movementCoverageFraction: 1,
+            alignedHeartRateSampleFraction: 1,
+            movementEventCount: 10,
+            movementEventRatePerHour: 2,
+            quietWindowProportion: 0.9,
+            quietMeanHeartRateBpm: 60,
+            movementMeanHeartRateBpm: 72,
+            normalToNormalProvenance: 'unverified',
+            officialMethodInputCompatible: false
+          }))
+        })
       })
     )
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
@@ -695,13 +695,13 @@ describe('Private dataset provisioning', () => {
         allowedUse: 'aggregate_resting_repeatability_only',
         sourceType: 'approved_real_cohort',
         participants: twenty({
-            subjectId: '2'.repeat(64),
-            recordings: Array.from({ length: 7 }, () => ({
-              recordingType: 'rest',
-              durationSeconds: 300,
-              rrIntervalsMs: intervals
-            }))
-          })
+          subjectId: '2'.repeat(64),
+          recordings: Array.from({ length: 7 }, () => ({
+            recordingType: 'rest',
+            durationSeconds: 300,
+            rrIntervalsMs: intervals
+          }))
+        })
       })
     )
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
@@ -726,15 +726,15 @@ describe('Private dataset provisioning', () => {
         allowedUse: 'aggregate_standing_response_only',
         sourceType: 'approved_real_cohort',
         participants: twenty({
-            subjectId: '3'.repeat(64),
-            recordings: [
-              {
-                recordingType: 'posture',
-                durationSeconds: 300,
-                rrIntervalsMs: Array(600).fill(500)
-              }
-            ]
-          })
+          subjectId: '3'.repeat(64),
+          recordings: [
+            {
+              recordingType: 'posture',
+              durationSeconds: 300,
+              rrIntervalsMs: Array(600).fill(500)
+            }
+          ]
+        })
       })
     )
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
@@ -784,17 +784,17 @@ describe('Private dataset provisioning', () => {
         sourceType: 'approved_real_cohort',
         protocol,
         participants: twenty({
-            subjectId: '4'.repeat(64),
-            recordings: [
-              {
-                recordingIndex: 1,
-                recordingType: 'exercise',
-                durationSeconds: 300,
-                protocol,
-                rrIntervalsMs: Array(300).fill(1000)
-              }
-            ]
-          })
+          subjectId: '4'.repeat(64),
+          recordings: [
+            {
+              recordingIndex: 1,
+              recordingType: 'exercise',
+              durationSeconds: 300,
+              protocol,
+              rrIntervalsMs: Array(300).fill(1000)
+            }
+          ]
+        })
       })
     )
     await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
@@ -849,6 +849,119 @@ describe('Private dataset provisioning', () => {
         ]
       })
     )
+    await expectFailure('private_dataset_contract_invalid')
+  })
+
+  it('requires reviewed study bindings and exact v2 protocol provenance', async () => {
+    const study = {
+      proposalId: 'study_a',
+      revisionId: 'revision_b',
+      revisionSha256: 'c'.repeat(64),
+      dataPermitId: `data_permit_${'d'.repeat(32)}`,
+      resultBearerTokenEnv: 'STUDY_RESULT_TEST_TOKEN'
+    }
+    const postureProtocol = {
+      protocolId: 'brainstem.active-stand',
+      protocolVersion: 1,
+      warmUpSeconds: 120,
+      restSeconds: 120,
+      standSeconds: 60
+    }
+    policy = {
+      ...policy,
+      maxBytes: 16 * 1024 * 1024,
+      analysisId: 'brainstem.standing-heart-rate-response/v2',
+      study,
+      paperInsight: {
+        algorithmVersion: '0.2.0',
+        inputSchema: 'brainstem.standing-heart-rate-response-cohort/v2',
+        candidateManifestSha256:
+          '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa',
+        approvedManifestSha256:
+          '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0',
+        referenceSha256:
+          '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb',
+        evidenceTier: 'E2_brainstem_compatible_exploratory',
+        useClass: 'methods_only',
+        clinicalUse: 'prohibited'
+      }
+    }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.standing-heart-rate-response-cohort/v2',
+        policy: 'brainstem.standing-heart-rate-response-cohort/latest-7/v2',
+        allowedUse: 'aggregate_standing_response_only',
+        sourceType: 'approved_real_cohort',
+        participants: twenty({
+          subjectId: '1'.repeat(64),
+          recordings: [
+            {
+              recordingType: 'posture',
+              durationSeconds: 300,
+              protocol: postureProtocol,
+              sourcePlatform: 'ios',
+              rrIntervalsMs: Array(600).fill(500)
+            }
+          ]
+        })
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    expect(receivedStudyProposalId).to.equal('study_a')
+    rmSync(destination)
+
+    expect(() =>
+      assertPrivateDatasetConfiguration({ ...policy, study: undefined }, environment)
+    ).to.throw(PrivateDatasetError, 'private_dataset_policy_invalid')
+
+    policy = {
+      ...policy,
+      analysisId: 'brainstem.guided-breathing-response/v2',
+      paperInsight: {
+        ...policy.paperInsight!,
+        inputSchema: 'brainstem.guided-breathing-response-cohort/v2',
+        candidateManifestSha256:
+          '37448779b23897895c535e89ecc2c91fe25c588a0bcab533ed34a94a0ec2a039',
+        approvedManifestSha256:
+          '0756610a32d48784d8ed3b7367bf164865b27aa1fe1a05517052b2b3dd292cb8',
+        referenceSha256:
+          '79090c71b0e219a6bb6b940bdcb251e2cfa3e9630a30de7534694e9caef8b2ec'
+      }
+    }
+    const breathingProtocol = { rateCPM: 6, ih: 5, ip: 0, eh: 5, ep: 0 }
+    body = Buffer.from(
+      JSON.stringify({
+        schema: 'brainstem.guided-breathing-response-cohort/v2',
+        policy:
+          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v2',
+        allowedUse: 'aggregate_guided_breathing_response_only',
+        sourceType: 'approved_real_cohort',
+        protocol: breathingProtocol,
+        participants: twenty({
+          subjectId: '2'.repeat(64),
+          recordings: [
+            {
+              recordingIndex: 1,
+              recordingType: 'exercise',
+              durationSeconds: 300,
+              exerciseSubtype: 'guided_breathing',
+              protocol: breathingProtocol,
+              protocolVersion: 1,
+              protocolSource: 'brainstem_app_prescribed',
+              breathingAdherenceMeasured: false,
+              sourcePlatform: 'android',
+              rrIntervalsMs: Array(300).fill(1000)
+            }
+          ]
+        })
+      })
+    )
+    await downloadPrivateDataset(file, destination, JOB_ID, policy, environment)
+    rmSync(destination)
+
+    const drifted = JSON.parse(body.toString())
+    drifted.participants[0].recordings[0].breathingAdherenceMeasured = true
+    body = Buffer.from(JSON.stringify(drifted))
     await expectFailure('private_dataset_contract_invalid')
   })
 

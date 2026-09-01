@@ -56,6 +56,8 @@ const OVERNIGHT_CHANGE_ANALYSIS_ID = 'brainstem.overnight-heart-rate-change/v1'
 const REST_REPEATABILITY_ANALYSIS_ID = 'brainstem.resting-hrv-repeatability/v1'
 const STANDING_RESPONSE_ANALYSIS_ID = 'brainstem.standing-heart-rate-response/v1'
 const GUIDED_BREATHING_ANALYSIS_ID = 'brainstem.guided-breathing-response/v1'
+const STANDING_RESPONSE_V2_ANALYSIS_ID = 'brainstem.standing-heart-rate-response/v2'
+const GUIDED_BREATHING_V2_ANALYSIS_ID = 'brainstem.guided-breathing-response/v2'
 const METHODS_CANDIDATE_SHA256 =
   '15dbf8544c87d81c06f5e512b00e9fe39dd6431dd1a4079a97da68a3f92721c1'
 const METHODS_APPROVED_SHA256 = '1'.repeat(64)
@@ -81,6 +83,18 @@ const GUIDED_BREATHING_CANDIDATE_SHA256 =
   'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
 const GUIDED_BREATHING_REFERENCE_SHA256 =
   '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232'
+const STANDING_RESPONSE_V2_CANDIDATE_SHA256 =
+  '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa'
+const STANDING_RESPONSE_V2_MANIFEST_SHA256 =
+  '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0'
+const STANDING_RESPONSE_V2_REFERENCE_SHA256 =
+  '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb'
+const GUIDED_BREATHING_V2_CANDIDATE_SHA256 =
+  '37448779b23897895c535e89ecc2c91fe25c588a0bcab533ed34a94a0ec2a039'
+const GUIDED_BREATHING_V2_MANIFEST_SHA256 =
+  '0756610a32d48784d8ed3b7367bf164865b27aa1fe1a05517052b2b3dd292cb8'
+const GUIDED_BREATHING_V2_REFERENCE_SHA256 =
+  '79090c71b0e219a6bb6b940bdcb251e2cfa3e9630a30de7534694e9caef8b2ec'
 
 function policy(crabUrl: string): PersonalInsightPolicy {
   return {
@@ -250,6 +264,35 @@ function guidedBreathingPolicy(crabUrl: string): PersonalInsightPolicy {
     resultContract: 'brainstem.insight-result/v1',
     resultProfile: 'brainstem.guided-breathing-response-personal/v1',
     maximumRecordings: 7
+  }
+}
+
+function standingResponseV2Policy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...standingResponsePolicy(crabUrl),
+    analysisId: STANDING_RESPONSE_V2_ANALYSIS_ID,
+    algorithmVersion: '0.2.0',
+    candidateManifestSha256: STANDING_RESPONSE_V2_CANDIDATE_SHA256,
+    approvedManifestSha256: STANDING_RESPONSE_V2_MANIFEST_SHA256,
+    referenceSha256: STANDING_RESPONSE_V2_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-standing-heart-rate-response/v2',
+    inputPolicy: 'brainstem.personal-standing-heart-rate-response/latest-7/v2',
+    resultProfile: 'brainstem.standing-heart-rate-response-personal/v2'
+  }
+}
+
+function guidedBreathingV2Policy(crabUrl: string): PersonalInsightPolicy {
+  return {
+    ...guidedBreathingPolicy(crabUrl),
+    analysisId: GUIDED_BREATHING_V2_ANALYSIS_ID,
+    algorithmVersion: '0.2.0',
+    candidateManifestSha256: GUIDED_BREATHING_V2_CANDIDATE_SHA256,
+    approvedManifestSha256: GUIDED_BREATHING_V2_MANIFEST_SHA256,
+    referenceSha256: GUIDED_BREATHING_V2_REFERENCE_SHA256,
+    inputSchema: 'brainstem.personal-guided-breathing-response/v2',
+    inputPolicy:
+      'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2',
+    resultProfile: 'brainstem.guided-breathing-response-personal/v2'
   }
 }
 
@@ -606,6 +649,38 @@ function guidedBreathingInput(): any {
       }
     ]
   }
+}
+
+function standingResponseV2Input(): any {
+  const value = standingResponseInput()
+  value.schema = 'brainstem.personal-standing-heart-rate-response/v2'
+  value.policy = 'brainstem.personal-standing-heart-rate-response/latest-7/v2'
+  Object.assign(value.recordings[0], {
+    protocol: {
+      protocolId: 'brainstem.active-stand',
+      protocolVersion: 1,
+      warmUpSeconds: 120,
+      restSeconds: 120,
+      standSeconds: 60
+    },
+    sourcePlatform: 'ios'
+  })
+  return value
+}
+
+function guidedBreathingV2Input(): any {
+  const value = guidedBreathingInput()
+  value.schema = 'brainstem.personal-guided-breathing-response/v2'
+  value.policy =
+    'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2'
+  Object.assign(value.recordings[0], {
+    exerciseSubtype: 'guided_breathing',
+    protocolVersion: 1,
+    protocolSource: 'brainstem_app_prescribed',
+    breathingAdherenceMeasured: false,
+    sourcePlatform: 'android'
+  })
+  return value
 }
 
 function guidedBreathingResult(): any {
@@ -1182,6 +1257,66 @@ describe('personal Insight boundary', () => {
     expect(() =>
       validatePersonalInsightInput(Buffer.from(JSON.stringify(rawMovement)), overnight)
     ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+  })
+
+  it('accepts only exact v2 protocol provenance for personal insights', () => {
+    const environment = {
+      PERSONAL_INSIGHT_TEST_TOKEN: 'generated-personal-test-token-long-enough',
+      PERSONAL_INSIGHT_BFF_TEST_TOKEN: BFF_TOKEN
+    }
+    const crabUrl = 'http://127.0.0.1:4321/'
+    const standing = standingResponseV2Policy(crabUrl)
+    const breathing = guidedBreathingV2Policy(crabUrl)
+    const environmentConfig = (personalInsight: PersonalInsightPolicy) => ({
+      storageExpiry: 14 * 24 * 60 * 60,
+      maxJobDuration: 120,
+      enableNetwork: false,
+      resources: [
+        { id: 'cpu', total: 2 },
+        { id: 'ram', total: 2 },
+        { id: 'disk', total: 1 }
+      ],
+      consumerResultPolicy: {
+        mode: 'singleJson',
+        maxBytes: 256 * 1024,
+        resultContract: 'brainstem.insight-result/v1'
+      },
+      personalInsight
+    })
+    expect(
+      C2DEnvironmentConfigSchema.safeParse(environmentConfig(standing)).success
+    ).to.equal(true)
+    expect(
+      C2DEnvironmentConfigSchema.safeParse(environmentConfig(breathing)).success
+    ).to.equal(true)
+    expect(() => assertPersonalInsightConfiguration(standing, environment)).not.to.throw()
+    expect(() =>
+      assertPersonalInsightConfiguration(breathing, environment)
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(standingResponseV2Input())),
+        standing
+      )
+    ).not.to.throw()
+    expect(() =>
+      validatePersonalInsightInput(
+        Buffer.from(JSON.stringify(guidedBreathingV2Input())),
+        breathing
+      )
+    ).not.to.throw()
+
+    const missingSource = guidedBreathingV2Input()
+    delete missingSource.recordings[0].protocolSource
+    expect(() =>
+      validatePersonalInsightInput(Buffer.from(JSON.stringify(missingSource)), breathing)
+    ).to.throw(PersonalInsightError, 'personal_insight_dataset_invalid')
+
+    const driftedManifest = standingResponseV2Policy(crabUrl)
+    driftedManifest.approvedManifestSha256 = '0'.repeat(64)
+    expect(() =>
+      assertPersonalInsightConfiguration(driftedManifest, environment)
+    ).to.throw(PersonalInsightError, 'personal_insight_policy_invalid')
   })
 
   it('retries only an idempotent completion after a lost connection', async () => {

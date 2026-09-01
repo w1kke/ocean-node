@@ -40,6 +40,18 @@ const GUIDED_BREATHING_CANDIDATE_SHA256 =
   'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
 const GUIDED_BREATHING_REFERENCE_SHA256 =
   '45d96a1769a6cd8e51c74ff603bc4589427fb8bfc2b6f69e65c4037c1c1e6232'
+const STANDING_RESPONSE_V2_CANDIDATE_SHA256 =
+  '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa'
+const STANDING_RESPONSE_V2_MANIFEST_SHA256 =
+  '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0'
+const STANDING_RESPONSE_V2_REFERENCE_SHA256 =
+  '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb'
+const GUIDED_BREATHING_V2_CANDIDATE_SHA256 =
+  '37448779b23897895c535e89ecc2c91fe25c588a0bcab533ed34a94a0ec2a039'
+const GUIDED_BREATHING_V2_MANIFEST_SHA256 =
+  '0756610a32d48784d8ed3b7367bf164865b27aa1fe1a05517052b2b3dd292cb8'
+const GUIDED_BREATHING_V2_REFERENCE_SHA256 =
+  '79090c71b0e219a6bb6b940bdcb251e2cfa3e9630a30de7534694e9caef8b2ec'
 const TITLE = 'My resting heart overview'
 const SUMMARY =
   'This overview describes the qualifying resting recordings used for this result.'
@@ -213,6 +225,21 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
     )
   }
+  if (policy.analysisId === 'brainstem.standing-heart-rate-response/v2') {
+    return (
+      policy.maximumRecordings === 7 &&
+      policy.algorithmVersion === '0.2.0' &&
+      policy.inputSchema === 'brainstem.personal-standing-heart-rate-response/v2' &&
+      policy.inputPolicy ===
+        'brainstem.personal-standing-heart-rate-response/latest-7/v2' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.standing-heart-rate-response-personal/v2' &&
+      policy.candidateManifestSha256 === STANDING_RESPONSE_V2_CANDIDATE_SHA256 &&
+      policy.approvedManifestSha256 === STANDING_RESPONSE_V2_MANIFEST_SHA256 &&
+      policy.referenceSha256 === STANDING_RESPONSE_V2_REFERENCE_SHA256 &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
+    )
+  }
   if (policy.analysisId === 'brainstem.guided-breathing-response/v1') {
     return (
       policy.maximumRecordings === 7 &&
@@ -226,6 +253,21 @@ function isExactNamedPolicy(policy: PersonalInsightPolicy): boolean {
       typeof policy.approvedManifestSha256 === 'string' &&
       SHA256.test(policy.approvedManifestSha256) &&
       policy.referenceSha256 === GUIDED_BREATHING_REFERENCE_SHA256 &&
+      policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
+    )
+  }
+  if (policy.analysisId === 'brainstem.guided-breathing-response/v2') {
+    return (
+      policy.maximumRecordings === 7 &&
+      policy.algorithmVersion === '0.2.0' &&
+      policy.inputSchema === 'brainstem.personal-guided-breathing-response/v2' &&
+      policy.inputPolicy ===
+        'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2' &&
+      policy.resultContract === 'brainstem.insight-result/v1' &&
+      policy.resultProfile === 'brainstem.guided-breathing-response-personal/v2' &&
+      policy.candidateManifestSha256 === GUIDED_BREATHING_V2_CANDIDATE_SHA256 &&
+      policy.approvedManifestSha256 === GUIDED_BREATHING_V2_MANIFEST_SHA256 &&
+      policy.referenceSha256 === GUIDED_BREATHING_V2_REFERENCE_SHA256 &&
       policy.evidenceTier === 'E2_brainstem_compatible_exploratory'
     )
   }
@@ -977,6 +1019,17 @@ const repeatabilityPersonalInput = z
   })
   .strict()
 
+const sourcePlatform = z.enum(['android', 'ios'])
+const standingResponseProtocol = z
+  .object({
+    protocolId: z.literal('brainstem.active-stand'),
+    protocolVersion: z.literal(1),
+    warmUpSeconds: z.literal(120),
+    restSeconds: z.literal(120),
+    standSeconds: z.literal(60)
+  })
+  .strict()
+
 const standingResponsePersonalInput = z
   .object({
     schema: z.literal('brainstem.personal-standing-heart-rate-response/v1'),
@@ -987,6 +1040,44 @@ const standingResponsePersonalInput = z
           .object({
             recordingType: z.literal('posture'),
             durationSeconds: z.number().int().min(295).max(305),
+            rrIntervalsMs: z
+              .array(z.number().finite().min(300).max(2000))
+              .min(148)
+              .max(1100)
+          })
+          .strict()
+          .superRefine((recording, context) => {
+            const representedSeconds =
+              recording.rrIntervalsMs.reduce((total, value) => total + value, 0) / 1000
+            if (
+              representedSeconds < 295 ||
+              representedSeconds > 305 ||
+              Math.abs(representedSeconds - recording.durationSeconds) > 5
+            ) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'interval duration does not match durationSeconds'
+              })
+            }
+          })
+      )
+      .min(1)
+      .max(7)
+  })
+  .strict()
+
+const standingResponseV2PersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-standing-heart-rate-response/v2'),
+    policy: z.literal('brainstem.personal-standing-heart-rate-response/latest-7/v2'),
+    recordings: z
+      .array(
+        z
+          .object({
+            recordingType: z.literal('posture'),
+            durationSeconds: z.number().int().min(295).max(305),
+            protocol: standingResponseProtocol,
+            sourcePlatform,
             rrIntervalsMs: z
               .array(z.number().finite().min(300).max(2000))
               .min(148)
@@ -1071,6 +1162,59 @@ const guidedBreathingPersonalInput = z
     }
   })
 
+const guidedBreathingV2PersonalInput = z
+  .object({
+    schema: z.literal('brainstem.personal-guided-breathing-response/v2'),
+    policy: z.literal(
+      'brainstem.personal-guided-breathing-response/protocol-6-5-0-5-0/latest-7/v2'
+    ),
+    protocol: guidedBreathingProtocol,
+    recordings: z
+      .array(
+        z
+          .object({
+            recordingIndex: z.number().int().min(1).max(7),
+            recordingType: z.literal('exercise'),
+            durationSeconds: z.number().int().min(120).max(1800),
+            exerciseSubtype: z.literal('guided_breathing'),
+            protocol: guidedBreathingProtocol,
+            protocolVersion: z.literal(1),
+            protocolSource: z.literal('brainstem_app_prescribed'),
+            breathingAdherenceMeasured: z.literal(false),
+            sourcePlatform,
+            rrIntervalsMs: z
+              .array(z.number().finite().min(300).max(2000))
+              .min(1)
+              .max(6000)
+          })
+          .strict()
+          .superRefine((recording, context) => {
+            const coverage =
+              recording.rrIntervalsMs.reduce((total, value) => total + value, 0) /
+              1000 /
+              recording.durationSeconds
+            if (coverage < 0.9 || coverage > 1.1) {
+              context.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'interval duration does not match durationSeconds'
+              })
+            }
+          })
+      )
+      .min(1)
+      .max(7)
+  })
+  .strict()
+  .superRefine((input, context) => {
+    const indices = input.recordings.map((recording) => recording.recordingIndex)
+    if (new Set(indices).size !== indices.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'recording indices must be unique'
+      })
+    }
+  })
+
 export function validatePersonalInsightInput(
   bytes: Buffer,
   policy: PersonalInsightPolicy
@@ -1090,15 +1234,22 @@ export function validatePersonalInsightInput(
           ? overnightPersonalInput
           : policy.inputSchema === 'brainstem.personal-resting-hrv-repeatability/v1'
             ? repeatabilityPersonalInput
-            : policy.inputSchema === 'brainstem.personal-standing-heart-rate-response/v1'
-              ? standingResponsePersonalInput
-              : policy.inputSchema === 'brainstem.personal-guided-breathing-response/v1'
-                ? guidedBreathingPersonalInput
-                : policy.inputSchema === 'brainstem.personal-sleep-nightly-features/v1'
-                  ? sleepBaselineV2PersonalInput
-                  : policy.inputSchema === 'brainstem.personal-sleep-baseline/v2'
-                    ? sleepBaselinePersonalInput
-                    : legacyPersonalInput
+            : policy.inputSchema === 'brainstem.personal-standing-heart-rate-response/v2'
+              ? standingResponseV2PersonalInput
+              : policy.inputSchema === 'brainstem.personal-guided-breathing-response/v2'
+                ? guidedBreathingV2PersonalInput
+                : policy.inputSchema ===
+                    'brainstem.personal-standing-heart-rate-response/v1'
+                  ? standingResponsePersonalInput
+                  : policy.inputSchema ===
+                      'brainstem.personal-guided-breathing-response/v1'
+                    ? guidedBreathingPersonalInput
+                    : policy.inputSchema ===
+                        'brainstem.personal-sleep-nightly-features/v1'
+                      ? sleepBaselineV2PersonalInput
+                      : policy.inputSchema === 'brainstem.personal-sleep-baseline/v2'
+                        ? sleepBaselinePersonalInput
+                        : legacyPersonalInput
   if (!input.safeParse(value).success) {
     throw new PersonalInsightError('personal_insight_dataset_invalid')
   }

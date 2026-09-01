@@ -43,6 +43,18 @@ const STANDING_RESPONSE_CANDIDATE_SHA256 =
   'ee503af519ed241f1f7ec965b58ad41b38c622c71a43e3f44c86743722ac4217'
 const GUIDED_BREATHING_CANDIDATE_SHA256 =
   'e64490c6539db744350ee761db4a1fedffd6f9f631f8814480a684c1fdc4931d'
+const STANDING_RESPONSE_V2_CANDIDATE_SHA256 =
+  '9dd1ff3e4ff551b128f44f61fdf33799f1e7514af5cd505eeae4b2db67a496fa'
+const STANDING_RESPONSE_V2_MANIFEST_SHA256 =
+  '7351da697fed84e68afbc440aef1d43f1de834363a862b8d912fa831f13e61b0'
+const STANDING_RESPONSE_V2_REFERENCE_SHA256 =
+  '188183a7b0ac8c046d1139219f252ed37142505107ee94d69472bf43105eb3cb'
+const GUIDED_BREATHING_V2_CANDIDATE_SHA256 =
+  '37448779b23897895c535e89ecc2c91fe25c588a0bcab533ed34a94a0ec2a039'
+const GUIDED_BREATHING_V2_MANIFEST_SHA256 =
+  '0756610a32d48784d8ed3b7367bf164865b27aa1fe1a05517052b2b3dd292cb8'
+const GUIDED_BREATHING_V2_REFERENCE_SHA256 =
+  '79090c71b0e219a6bb6b940bdcb251e2cfa3e9630a30de7534694e9caef8b2ec'
 type PrivateTransportPolicy = Omit<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'> &
   Partial<Pick<PrivateDatasetPolicy, 'analysisId' | 'paperInsight'>>
 
@@ -75,7 +87,7 @@ export function isLocalProofHostname(hostname: string): boolean {
         (character >= 'a' && character <= 'z') ||
         (character >= '0' && character <= '9') ||
         character === '-'
-  )
+    )
   return hostname === 'localhost' || loopbackIpv4 || singleLabel
 }
 
@@ -89,6 +101,32 @@ function isGuidedBreathingProtocol(value: unknown): boolean {
     protocol.ip === 0 &&
     protocol.eh === 5 &&
     protocol.ep === 0
+  )
+}
+
+function isPostureProtocol(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const protocol = value as Record<string, unknown>
+  return (
+    Object.keys(protocol).sort().join(',') ===
+      'protocolId,protocolVersion,restSeconds,standSeconds,warmUpSeconds' &&
+    protocol.protocolId === 'brainstem.active-stand' &&
+    protocol.protocolVersion === 1 &&
+    protocol.warmUpSeconds === 120 &&
+    protocol.restSeconds === 120 &&
+    protocol.standSeconds === 60
+  )
+}
+
+function hasStudyBinding(policy: PrivateTransportPolicy): boolean {
+  return Boolean(
+    policy.study &&
+    /^study_[0-9a-f]{1,64}$/.test(policy.study.proposalId) &&
+    /^revision_[0-9a-f]{1,64}$/.test(policy.study.revisionId) &&
+    SHA256.test(policy.study.revisionSha256) &&
+    /^data_permit_[0-9a-f]{32}$/.test(policy.study.dataPermitId) &&
+    /^[A-Z][A-Z0-9_]{0,63}$/.test(policy.study.resultBearerTokenEnv) &&
+    policy.study.resultBearerTokenEnv !== policy.bearerTokenEnv
   )
 }
 
@@ -214,13 +252,7 @@ export function assertPrivateDatasetConfiguration(
   }
   if (
     policy.analysisId === 'brainstem.full-night-rr-signal-compatibility/v1' &&
-    (!policy.study ||
-      !/^study_[0-9a-f]{1,64}$/.test(policy.study.proposalId) ||
-      !/^revision_[0-9a-f]{1,64}$/.test(policy.study.revisionId) ||
-      !SHA256.test(policy.study.revisionSha256) ||
-      !/^data_permit_[0-9a-f]{32}$/.test(policy.study.dataPermitId) ||
-      !/^[A-Z][A-Z0-9_]{0,63}$/.test(policy.study.resultBearerTokenEnv) ||
-      policy.study.resultBearerTokenEnv === policy.bearerTokenEnv ||
+    (!hasStudyBinding(policy) ||
       policy.paperInsight !== undefined ||
       policy.participantValue !== undefined)
   ) {
@@ -295,6 +327,42 @@ export function assertPrivateDatasetConfiguration(
       policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
       policy.paperInsight.useClass !== 'methods_only' ||
       policy.paperInsight.clinicalUse !== 'prohibited')
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.standing-heart-rate-response/v2' &&
+    (!hasStudyBinding(policy) ||
+      policy.paperInsight?.algorithmVersion !== '0.2.0' ||
+      policy.paperInsight.inputSchema !==
+        'brainstem.standing-heart-rate-response-cohort/v2' ||
+      policy.paperInsight.candidateManifestSha256 !==
+        STANDING_RESPONSE_V2_CANDIDATE_SHA256 ||
+      policy.paperInsight.approvedManifestSha256 !==
+        STANDING_RESPONSE_V2_MANIFEST_SHA256 ||
+      policy.paperInsight.referenceSha256 !== STANDING_RESPONSE_V2_REFERENCE_SHA256 ||
+      policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited' ||
+      policy.participantValue !== undefined)
+  ) {
+    throw new PrivateDatasetError('private_dataset_policy_invalid')
+  }
+  if (
+    policy.analysisId === 'brainstem.guided-breathing-response/v2' &&
+    (!hasStudyBinding(policy) ||
+      policy.paperInsight?.algorithmVersion !== '0.2.0' ||
+      policy.paperInsight.inputSchema !==
+        'brainstem.guided-breathing-response-cohort/v2' ||
+      policy.paperInsight.candidateManifestSha256 !==
+        GUIDED_BREATHING_V2_CANDIDATE_SHA256 ||
+      policy.paperInsight.approvedManifestSha256 !==
+        GUIDED_BREATHING_V2_MANIFEST_SHA256 ||
+      policy.paperInsight.referenceSha256 !== GUIDED_BREATHING_V2_REFERENCE_SHA256 ||
+      policy.paperInsight.evidenceTier !== 'E2_brainstem_compatible_exploratory' ||
+      policy.paperInsight.useClass !== 'methods_only' ||
+      policy.paperInsight.clinicalUse !== 'prohibited' ||
+      policy.participantValue !== undefined)
   ) {
     throw new PrivateDatasetError('private_dataset_policy_invalid')
   }
@@ -453,7 +521,10 @@ function validateReviewedCohortInput(
     const dataset = JSON.parse(
       new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(destination))
     )
-    if (policy.study) {
+    if (
+      policy.study &&
+      policy.analysisId === 'brainstem.full-night-rr-signal-compatibility/v1'
+    ) {
       if (
         !dataset ||
         Array.isArray(dataset) ||
@@ -546,11 +617,17 @@ function validateReviewedCohortInput(
       policy.paperInsight.inputSchema === 'brainstem.sleep-nightly-features-cohort/v1'
     const repeatability =
       policy.paperInsight.inputSchema === 'brainstem.resting-hrv-repeatability-cohort/v1'
+    const standingV2 =
+      policy.paperInsight.inputSchema ===
+      'brainstem.standing-heart-rate-response-cohort/v2'
     const standing =
       policy.paperInsight.inputSchema ===
-      'brainstem.standing-heart-rate-response-cohort/v1'
+        'brainstem.standing-heart-rate-response-cohort/v1' || standingV2
+    const guidedBreathingV2 =
+      policy.paperInsight.inputSchema === 'brainstem.guided-breathing-response-cohort/v2'
     const guidedBreathing =
-      policy.paperInsight.inputSchema === 'brainstem.guided-breathing-response-cohort/v1'
+      policy.paperInsight.inputSchema ===
+        'brainstem.guided-breathing-response-cohort/v1' || guidedBreathingV2
     if (
       !dataset ||
       Array.isArray(dataset) ||
@@ -584,11 +661,16 @@ function validateReviewedCohortInput(
         (dataset.policy !== 'brainstem.resting-hrv-repeatability-cohort/distinct-7/v1' ||
           dataset.allowedUse !== 'aggregate_resting_repeatability_only')) ||
       (standing &&
-        (dataset.policy !== 'brainstem.standing-heart-rate-response-cohort/latest-7/v1' ||
+        (dataset.policy !==
+          (standingV2
+            ? 'brainstem.standing-heart-rate-response-cohort/latest-7/v2'
+            : 'brainstem.standing-heart-rate-response-cohort/latest-7/v1') ||
           dataset.allowedUse !== 'aggregate_standing_response_only')) ||
       (guidedBreathing &&
         (dataset.policy !==
-          'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1' ||
+          (guidedBreathingV2
+            ? 'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v2'
+            : 'brainstem.guided-breathing-response-cohort/protocol-6-5-0-5-0/latest-7/v1') ||
           dataset.allowedUse !== 'aggregate_guided_breathing_response_only' ||
           !isGuidedBreathingProtocol(dataset.protocol))) ||
       !Array.isArray(dataset.participants) ||
@@ -711,8 +793,13 @@ function validateReviewedCohortInput(
             !recording ||
             Array.isArray(recording) ||
             Object.keys(recording).sort().join(',') !==
-              'durationSeconds,recordingType,rrIntervalsMs' ||
+              (standingV2
+                ? 'durationSeconds,protocol,recordingType,rrIntervalsMs,sourcePlatform'
+                : 'durationSeconds,recordingType,rrIntervalsMs') ||
             recording.recordingType !== 'posture' ||
+            (standingV2 &&
+              (!isPostureProtocol(recording.protocol) ||
+                !['android', 'ios'].includes(recording.sourcePlatform))) ||
             !Number.isInteger(recording.durationSeconds) ||
             recording.durationSeconds < 295 ||
             recording.durationSeconds > 305 ||
@@ -750,12 +837,20 @@ function validateReviewedCohortInput(
             !recording ||
             Array.isArray(recording) ||
             Object.keys(recording).sort().join(',') !==
-              'durationSeconds,protocol,recordingIndex,recordingType,rrIntervalsMs' ||
+              (guidedBreathingV2
+                ? 'breathingAdherenceMeasured,durationSeconds,exerciseSubtype,protocol,protocolSource,protocolVersion,recordingIndex,recordingType,rrIntervalsMs,sourcePlatform'
+                : 'durationSeconds,protocol,recordingIndex,recordingType,rrIntervalsMs') ||
             !Number.isInteger(recording.recordingIndex) ||
             recording.recordingIndex < 1 ||
             recording.recordingIndex > 7 ||
             indices.has(recording.recordingIndex) ||
             recording.recordingType !== 'exercise' ||
+            (guidedBreathingV2 &&
+              (recording.exerciseSubtype !== 'guided_breathing' ||
+                recording.protocolVersion !== 1 ||
+                recording.protocolSource !== 'brainstem_app_prescribed' ||
+                recording.breathingAdherenceMeasured !== false ||
+                !['android', 'ios'].includes(recording.sourcePlatform))) ||
             !Number.isInteger(recording.durationSeconds) ||
             recording.durationSeconds < 120 ||
             recording.durationSeconds > 1800 ||
